@@ -91,6 +91,32 @@ class MainCliTests(unittest.TestCase):
         scraper.assert_called_once_with(max_pages=None, fetch_details=False, delay=0.0)
         self.assertIn(f"from {DEFAULT_SOURCE}", stdout.getvalue())
 
+    def test_main_routes_glints_source_and_writes_output_under_glints_directory(self) -> None:
+        default_scraper = Mock(return_value=[build_job("default-job")])
+        glints_scraper = Mock(return_value=[build_job("glints-job")])
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(
+            main,
+            "SCRAPERS",
+            {DEFAULT_SOURCE: default_scraper, "glints": glints_scraper},
+        ):
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main.main(["--source", "glints", "--output-dir", tmpdir])
+
+            output_dir = Path(tmpdir) / "glints"
+            output_paths = list(output_dir.glob("glints_*.json"))
+            payload = json.loads(output_paths[0].read_text(encoding="utf-8"))
+            output_path = output_paths[0]
+
+        self.assertEqual(exit_code, 0)
+        default_scraper.assert_not_called()
+        glints_scraper.assert_called_once_with(max_pages=1, fetch_details=False, delay=0.0)
+        self.assertEqual(len(output_paths), 1)
+        self.assertEqual(payload, [build_job("glints-job").to_dict()])
+        self.assertIn(str(output_path), stdout.getvalue())
+        self.assertIn("from glints", stdout.getvalue())
+
     def test_parse_args_rejects_invalid_source(self) -> None:
         stderr = io.StringIO()
 
