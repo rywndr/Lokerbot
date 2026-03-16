@@ -23,21 +23,29 @@ pip install -r requirements.txt
 
 ## Run
 
-Scrape one page from Dealls:
+The CLI currently supports one source, `dealls`, and defaults to it for backward compatibility. More sources will follow.
+
+Backward-compatible usage:
 
 ```bash
 python main.py --max-pages 1
 ```
 
+Explicit source selection:
+
+```bash
+python main.py --source dealls --max-pages 1
+```
+
 Options:
 
 ```bash
-python main.py --max-pages 3
-python main.py --max-pages 1 --fetch-details
-python main.py --max-pages 1 --output-dir output
+python main.py --source dealls --max-pages 3
+python main.py --source dealls --max-pages 1 --fetch-details
+python main.py --source dealls --max-pages 1 --output-dir output
 ```
 
-JSON snapshots are written to `output/`
+JSON snapshots are written under `output/<source>/`
 
 ## How the Dealls scraper works
 

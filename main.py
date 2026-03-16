@@ -2,19 +2,26 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 
-from lokerbot.scrapers.dealls import scrape
+from lokerbot.scrapers import DEFAULT_SOURCE, SCRAPERS
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Scrape job listings from Dealls.")
-    parser.add_argument("--max-pages", type=int, default=1, help="Number of Dealls result pages to scrape.")
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Scrape job listings from supported sources.")
+    parser.add_argument(
+        "--source",
+        choices=tuple(SCRAPERS),
+        default=DEFAULT_SOURCE,
+        help=f"Job source to scrape (default: {DEFAULT_SOURCE}).",
+    )
+    parser.add_argument("--max-pages", type=int, default=1, help="Number of result pages to scrape.")
     parser.add_argument(
         "--fetch-details",
         action="store_true",
-        help="Fetch job-detail API data for listings missing key fields.",
+        help="Fetch additional job-detail data for listings missing key fields.",
     )
     parser.add_argument(
         "--delay",
@@ -25,26 +32,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         default="output",
-        help="Directory where JSON snapshots should be written.",
+        help="Root directory where source-specific JSON snapshots should be written.",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> int:
-    args = parse_args()
-    jobs = scrape(max_pages=args.max_pages, fetch_details=args.fetch_details, delay=args.delay)
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(argv)
+    scraper = SCRAPERS[args.source]
+    jobs = scraper(max_pages=args.max_pages, fetch_details=args.fetch_details, delay=args.delay)
 
-    output_dir = Path(args.output_dir)
+    output_dir = Path(args.output_dir) / args.source
     output_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    output_path = output_dir / f"dealls_{timestamp}.json"
+    output_path = output_dir / f"{args.source}_{timestamp}.json"
     output_path.write_text(
         json.dumps([job.to_dict() for job in jobs], indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
 
-    print(f"Saved {len(jobs)} jobs to {output_path}")
+    print(f"Saved {len(jobs)} jobs from {args.source} to {output_path}")
     return 0
 
 
