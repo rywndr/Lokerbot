@@ -103,7 +103,10 @@ def scrape(
             except requests.HTTPError as exc:
                 status_code = exc.response.status_code if exc.response is not None else None
                 if max_pages is None and status_code == 400:
-                    warnings.warn(f"Dealls rejected page {page}; stopping pagination early.", RuntimeWarning)
+                    warnings.warn(
+                        f"Dealls reported more pages than the API allows; page {page} was rejected, so pagination stopped at page {page - 1}.",
+                        RuntimeWarning,
+                    )
                     break
                 raise
             jobs.extend(

@@ -204,7 +204,7 @@ class DeallsScrapeTests(unittest.TestCase):
             patch("lokerbot.scrapers.dealls._fetch_api_page", side_effect=[second_page, page_error]) as fetch_api_page_mock,
             patch("lokerbot.scrapers.dealls.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
         ):
-            with self.assertWarnsRegex(RuntimeWarning, "rejected page 3"):
+            with self.assertWarnsRegex(RuntimeWarning, "page 3 was rejected, so pagination stopped at page 2"):
                 jobs = scrape(max_pages=None, fetch_details=False, delay=0.0, session=session)
 
         self.assertEqual(jobs, ["page-1-job", "page-2-job"])
