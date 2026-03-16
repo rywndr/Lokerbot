@@ -17,7 +17,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_SOURCE,
         help=f"Job source to scrape (default: {DEFAULT_SOURCE}).",
     )
-    parser.add_argument("--max-pages", type=int, default=1, help="Number of result pages to scrape.")
+    pagination_group = parser.add_mutually_exclusive_group()
+    pagination_group.add_argument("--max-pages", type=int, default=1, help="Number of result pages to scrape.")
+    pagination_group.add_argument(
+        "--all-pages",
+        action="store_true",
+        help="Scrape every available result page.",
+    )
     parser.add_argument(
         "--fetch-details",
         action="store_true",
@@ -40,7 +46,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     scraper = SCRAPERS[args.source]
-    jobs = scraper(max_pages=args.max_pages, fetch_details=args.fetch_details, delay=args.delay)
+    max_pages = None if args.all_pages else args.max_pages
+    jobs = scraper(max_pages=max_pages, fetch_details=args.fetch_details, delay=args.delay)
 
     output_dir = Path(args.output_dir) / args.source
     output_dir.mkdir(parents=True, exist_ok=True)

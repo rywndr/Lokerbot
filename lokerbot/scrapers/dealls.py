@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import time
+import warnings
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
 
@@ -18,6 +20,7 @@ LISTING_QUERY_KEY = "/v1/explore-job/job"
 HTML_ACCEPT_HEADER = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
+RECENT_POST_WINDOW = timedelta(days=30)
 
 
 def fetch_listing_page(session: requests.Session | None = None) -> str:
@@ -52,12 +55,12 @@ def parse_jobs(payload: dict[str, Any], scraped_at: str | None = None) -> list[J
 
 
 def scrape(
-    max_pages: int = 1,
+    max_pages: int | None = 1,
     fetch_details: bool = False,
     delay: float = 0.0,
     session: requests.Session | None = None,
 ) -> list[Job]:
-    if max_pages < 1:
+    if max_pages is not None and max_pages < 1:
         raise ValueError("max_pages must be at least 1")
     if delay < 0:
         raise ValueError("delay must be non-negative")
@@ -80,12 +83,29 @@ def scrape(
         )
 
         total_pages = first_page.get("totalPages") if isinstance(first_page, dict) else None
-        last_page = min(max_pages, total_pages) if isinstance(total_pages, int) and total_pages > 0 else max_pages
+        if max_pages is None:
+            if isinstance(total_pages, int) and total_pages > 0:
+                last_page = total_pages
+            else:
+                warnings.warn(
+                    "Dealls listing did not include a valid totalPages value; scraping only the first page.",
+                    RuntimeWarning,
+                )
+                last_page = 1
+        else:
+            last_page = min(max_pages, total_pages) if isinstance(total_pages, int) and total_pages > 0 else max_pages
 
         for page in range(2, last_page + 1):
             if delay:
                 time.sleep(delay)
-            page_payload = _fetch_api_page(session, page=page, query_params=query_params, app_version=app_version)
+            try:
+                page_payload = _fetch_api_page(session, page=page, query_params=query_params, app_version=app_version)
+            except requests.HTTPError as exc:
+                status_code = exc.response.status_code if exc.response is not None else None
+                if max_pages is None and status_code == 400:
+                    warnings.warn(f"Dealls rejected page {page}; stopping pagination early.", RuntimeWarning)
+                    break
+                raise
             jobs.extend(
                 _parse_and_optionally_enrich(
                     page_payload,
@@ -115,17 +135,40 @@ def _parse_and_optionally_enrich(
     if not isinstance(raw_jobs, list):
         raise ValueError("Dealls payload did not include a docs list")
 
+    scraped_at_dt = _parse_iso_datetime(scraped_at)
+    if scraped_at_dt is None:
+        raise ValueError("scraped_at must be a valid ISO 8601 timestamp")
+
     jobs: list[Job] = []
     for item in raw_jobs:
         if not isinstance(item, dict):
             continue
         job = _parse_job_doc(item, scraped_at=scraped_at)
-        if job is None:
+        if job is None or not _is_recent_job_post(job.posted_at, scraped_at_dt):
             continue
         if fetch_details and _should_fetch_detail(job):
             _enrich_job_from_detail(session, job, item, app_version=app_version)
         jobs.append(job)
     return jobs
+
+
+def _is_recent_job_post(posted_at: str | None, scraped_at: datetime) -> bool:
+    posted_at_dt = _parse_iso_datetime(posted_at)
+    if posted_at_dt is None:
+        return False
+    return scraped_at - RECENT_POST_WINDOW <= posted_at_dt <= scraped_at
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def _fetch_api_page(

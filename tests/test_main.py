@@ -33,6 +33,8 @@ class MainCliTests(unittest.TestCase):
         args = main.parse_args([])
 
         self.assertEqual(args.source, DEFAULT_SOURCE)
+        self.assertEqual(args.max_pages, 1)
+        self.assertFalse(args.all_pages)
 
     def test_main_uses_default_source_when_flag_omitted(self) -> None:
         scraper = Mock(return_value=[build_job("default-job")])
@@ -77,6 +79,18 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(payload, [build_job("explicit-job").to_dict()])
         self.assertIn(str(output_path), stdout.getvalue())
 
+    def test_main_routes_all_pages_to_scraper(self) -> None:
+        scraper = Mock(return_value=[build_job("all-pages-job")])
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(main, "SCRAPERS", {DEFAULT_SOURCE: scraper}):
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main.main(["--source", DEFAULT_SOURCE, "--all-pages", "--output-dir", tmpdir])
+
+        self.assertEqual(exit_code, 0)
+        scraper.assert_called_once_with(max_pages=None, fetch_details=False, delay=0.0)
+        self.assertIn(f"from {DEFAULT_SOURCE}", stdout.getvalue())
+
     def test_parse_args_rejects_invalid_source(self) -> None:
         stderr = io.StringIO()
 
@@ -85,6 +99,17 @@ class MainCliTests(unittest.TestCase):
 
         self.assertNotEqual(exc.exception.code, 0)
         self.assertIn("invalid choice", stderr.getvalue())
+
+    def test_parse_args_rejects_all_pages_with_max_pages(self) -> None:
+        stderr = io.StringIO()
+
+        with redirect_stderr(stderr), self.assertRaises(SystemExit) as exc:
+            main.parse_args(["--all-pages", "--max-pages", "3"])
+
+        self.assertNotEqual(exc.exception.code, 0)
+        self.assertIn("--all-pages", stderr.getvalue())
+        self.assertIn("--max-pages", stderr.getvalue())
+        self.assertIn("not allowed with argument", stderr.getvalue())
 
 
 if __name__ == "__main__":

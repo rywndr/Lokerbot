@@ -25,6 +25,8 @@ pip install -r requirements.txt
 
 The CLI currently supports one source, `dealls`, and defaults to it for backward compatibility. More sources will follow.
 
+`--max-pages` defaults to `1` so the backward-compatible behavior is still a single results page. Use `--all-pages` to let the Dealls scraper paginate through every available page it can reach. `--max-pages` and `--all-pages` are mutually exclusive.
+
 Backward-compatible usage:
 
 ```bash
@@ -41,20 +43,23 @@ Options:
 
 ```bash
 python main.py --source dealls --max-pages 3
+python main.py --source dealls --all-pages
 python main.py --source dealls --max-pages 1 --fetch-details
 python main.py --source dealls --max-pages 1 --output-dir output
 ```
 
-JSON snapshots are written under `output/<source>/`
+JSON snapshots are written under `output/<source>/`.
+
+Dealls snapshots only include listings whose `posted_at` falls between the scrape time and 30 days back, so older or future-dated jobs are excluded from the saved output.
 
 ## How the Dealls scraper works
 
 Workflow:
 1. Fetch the Dealls listing page HTML
 2. Read the embedded Next.js `__NEXT_DATA__` payload
-3. Extract the initial Dealls jobs query from the dehydrated page data
-4. Normalize each listing into the shared `Job` model
-5. Optionally request additional detail data for listings that are missing key fields
+3. Extract the initial Dealls jobs query and available pagination data from the dehydrated page data
+4. Normalize each listing into the shared `Job` model and keep only jobs posted within the last 30 days
+5. Optionally request additional detail data for recent listings that are missing key fields
 6. Save the results as a JSON snapshot through `main.py`
 
 Shared helpers:
