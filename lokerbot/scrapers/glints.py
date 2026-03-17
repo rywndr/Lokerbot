@@ -4,7 +4,6 @@ import json
 import re
 import time
 import warnings
-from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urljoin
 
@@ -15,15 +14,17 @@ from lokerbot.models import Job, utc_now_iso
 from lokerbot.nextjs import extract_next_data
 from lokerbot.utils import (
     clean_string as _clean_string,
+    dedupe_list as _dedupe,
     humanize_label as _humanize_label,
+    is_recent_job_post as _is_recent_job_post,
     normalize_description_text as _normalize_description_text,
+    parse_iso_datetime as _parse_iso_datetime,
 )
 
 GLINTS_LISTING_URL = "https://glints.com/id/lowongan-kerja"
 GLINTS_JOB_PATH = "/id/opportunities/jobs/"
 DEFAULT_BROWSER_NAME = "firefox"
 PAGE_TIMEOUT_MS = 120_000
-RECENT_POST_WINDOW = timedelta(days=30)
 LOGIN_GATE_TEXT = "Login untuk lihat loker lebih banyak"
 JOB_ID_PATTERN = re.compile(r"/id/opportunities/jobs/[^/]+/(?P<job_id>[0-9a-f-]+)")
 WORK_ARRANGEMENT_LABELS = {
@@ -514,40 +515,8 @@ def _collect_tags(item: dict[str, Any]) -> list[str]:
 
     return _dedupe(tags)
 
-
-def _is_recent_job_post(posted_at: str | None, scraped_at: datetime) -> bool:
-    posted_at_dt = _parse_iso_datetime(posted_at)
-    if posted_at_dt is None:
-        return False
-    return scraped_at - RECENT_POST_WINDOW <= posted_at_dt <= scraped_at
-
-
-def _parse_iso_datetime(value: str | None) -> datetime | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed
-
-
 def _is_amount(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-
-def _dedupe(values: list[str]) -> list[str]:
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        if value in seen:
-            continue
-        deduped.append(value)
-        seen.add(value)
-    return deduped
-
 
 def _should_replace_location(current: str | None, candidate: str | None) -> bool:
     if candidate is None:

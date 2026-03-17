@@ -106,6 +106,6 @@ Current limitations:
 ## Shared helpers
 
 - `lokerbot/nextjs.py` for generic `__NEXT_DATA__` extraction
-- `lokerbot/utils.py` for shared string and description normalization helpers
+- `lokerbot/utils.py` for shared string normalization, description normalization, ISO datetime parsing, 30-day recency filtering, and stable list deduplication helpers
 - `lokerbot/http_client.py` for the shared HTTP session
 - `lokerbot/models.py` for the shared `Job` output model

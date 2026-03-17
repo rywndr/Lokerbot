@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import time
 import warnings
-from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
 
@@ -13,8 +12,11 @@ from lokerbot.models import Job, utc_now_iso
 from lokerbot.nextjs import extract_next_data
 from lokerbot.utils import (
     clean_string as _clean_string,
+    dedupe_list as _dedupe_list,
     humanize_label as _humanize_label,
+    is_recent_job_post as _is_recent_job_post,
     normalize_description_text as _normalize_description_text,
+    parse_iso_datetime as _parse_iso_datetime,
 )
 
 DEALLS_LISTING_URL = "https://dealls.com/loker"
@@ -24,7 +26,6 @@ LISTING_QUERY_KEY = "/v1/explore-job/job"
 HTML_ACCEPT_HEADER = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
-RECENT_POST_WINDOW = timedelta(days=30)
 
 
 def fetch_listing_page(session: requests.Session | None = None) -> str:
@@ -157,26 +158,6 @@ def _parse_and_optionally_enrich(
             _enrich_job_from_detail(session, job, item, app_version=app_version)
         jobs.append(job)
     return jobs
-
-
-def _is_recent_job_post(posted_at: str | None, scraped_at: datetime) -> bool:
-    posted_at_dt = _parse_iso_datetime(posted_at)
-    if posted_at_dt is None:
-        return False
-    return scraped_at - RECENT_POST_WINDOW <= posted_at_dt <= scraped_at
-
-
-def _parse_iso_datetime(value: str | None) -> datetime | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed
-
 
 def _fetch_api_page(
     session: requests.Session,
@@ -427,14 +408,7 @@ def _collect_tags(item: dict[str, Any]) -> list[str]:
             if name:
                 tags.append(name)
 
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for tag in tags:
-        if tag in seen:
-            continue
-        deduped.append(tag)
-        seen.add(tag)
-    return deduped
+    return _dedupe_list(tags)
 
 
 __all__ = ["fetch_listing_page", "parse_jobs", "scrape"]
