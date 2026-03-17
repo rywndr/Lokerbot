@@ -8,7 +8,7 @@ from unittest.mock import Mock, call, patch
 import requests
 
 from lokerbot.nextjs import extract_next_data
-from lokerbot.scrapers.dealls import fetch_listing_page, parse_jobs, scrape
+from lokerbot.scrapers.dealls import _parse_and_optionally_enrich, fetch_listing_page, parse_jobs, scrape
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "dealls_listing.html"
 FIXTURE_SCRAPED_AT = "2026-03-16T12:00:00Z"
@@ -54,6 +54,7 @@ class DeallsParserTests(unittest.TestCase):
         self.assertEqual(first_job.tags, ["On Site"])
         self.assertEqual(first_job.posted_at, "2026-03-13T09:58:00.715Z")
         self.assertEqual(first_job.scraped_at, FIXTURE_SCRAPED_AT)
+        self.assertIsNone(first_job.description)
 
         second_job = jobs[1]
         self.assertEqual(second_job.company, "Acme Learning")
@@ -66,6 +67,7 @@ class DeallsParserTests(unittest.TestCase):
         )
         self.assertEqual(second_job.tags, ["Hybrid", "Adobe Premiere Pro", "Storyboarding"])
         self.assertEqual(second_job.scraped_at, FIXTURE_SCRAPED_AT)
+        self.assertIsNone(second_job.description)
 
     def test_parse_jobs_uses_remote_workplace_as_location_fallback(self) -> None:
         jobs = parse_jobs(
@@ -216,6 +218,40 @@ class DeallsScrapeTests(unittest.TestCase):
                 call(session, page=3, query_params=query_params, app_version="web-123"),
             ],
         )
+
+    def test_parse_and_optionally_enrich_populates_plain_text_description(self) -> None:
+        session = Mock()
+        detail_response = Mock()
+        detail_response.json.return_value = {
+            "data": {
+                "result": {
+                    "location": "Jakarta, Indonesia",
+                    "employmentTypes": ["fullTime"],
+                    "salaryRange": None,
+                    "salaryType": "paid",
+                    "skills": [],
+                    "description": None,
+                    "responsibilities": "<ul><li>Lead daily operations.</li><li>Coordinate&nbsp;with vendors.</li></ul>",
+                    "requirements": "<p>3+ years of experience.</p><p>Strong communication.</p>",
+                }
+            }
+        }
+        session.get.return_value = detail_response
+
+        jobs = _parse_and_optionally_enrich(
+            {"docs": [build_job_doc("detail-job", "2026-03-16T08:00:00Z")]},
+            session=session,
+            fetch_details=True,
+            app_version="web-123",
+            scraped_at=FIXTURE_SCRAPED_AT,
+        )
+
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(
+            jobs[0].description,
+            "Responsibilities\nLead daily operations.\nCoordinate with vendors.\n\nRequirements\n3+ years of experience.\nStrong communication.",
+        )
+        session.get.assert_called_once()
 
     def test_scrape_keeps_only_jobs_from_today_back_to_30_days(self) -> None:
         session = Mock()

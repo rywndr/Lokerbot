@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import time
 import warnings
@@ -12,7 +13,11 @@ from playwright.sync_api import Page, Playwright, sync_playwright
 
 from lokerbot.models import Job, utc_now_iso
 from lokerbot.nextjs import extract_next_data
-from lokerbot.utils import clean_string as _clean_string, humanize_label as _humanize_label
+from lokerbot.utils import (
+    clean_string as _clean_string,
+    humanize_label as _humanize_label,
+    normalize_description_text as _normalize_description_text,
+)
 
 GLINTS_LISTING_URL = "https://glints.com/id/lowongan-kerja"
 GLINTS_JOB_PATH = "/id/opportunities/jobs/"
@@ -152,7 +157,7 @@ def _scrape_with_context(
                     detail_page = context.new_page()
                 if delay and detail_fetch_count:
                     time.sleep(delay)
-                _enrich_job_from_detail(detail_page, job)
+                _enrich_job_from_detail(detail_page, job, include_description=fetch_details)
                 detail_fetch_count += 1
 
             if job.job_id in seen_job_ids:
@@ -297,7 +302,7 @@ def _normalize_job_url(url: str) -> str:
     return urljoin(GLINTS_LISTING_URL, url.split("?", 1)[0])
 
 
-def _enrich_job_from_detail(page: Page, job: Job) -> None:
+def _enrich_job_from_detail(page: Page, job: Job, *, include_description: bool = False) -> None:
     detail_html = _fetch_detail_page_html(page, job.url)
     try:
         next_data = extract_next_data(detail_html)
@@ -321,6 +326,9 @@ def _enrich_job_from_detail(page: Page, job: Job) -> None:
     detail_tags = _collect_tags(detail)
     if detail_tags and (not job.tags or len(detail_tags) > len(job.tags)):
         job.tags = detail_tags
+
+    if include_description:
+        job.description = job.description or _extract_description(detail)
 
 
 def _extract_detail_job(payload: dict[str, Any], job_id: str) -> dict[str, Any] | None:
@@ -351,10 +359,38 @@ def _resolve_apollo_value(cache: dict[str, Any], value: Any) -> Any:
     return value
 
 
+def _extract_description(detail: dict[str, Any]) -> str | None:
+    raw_description = _clean_string(detail.get("descriptionJsonString"))
+    if raw_description is None:
+        return None
+
+    try:
+        parsed = json.loads(raw_description)
+    except json.JSONDecodeError:
+        return _normalize_description_text(raw_description)
+
+    if not isinstance(parsed, dict):
+        return None
+
+    blocks = parsed.get("blocks")
+    if not isinstance(blocks, list):
+        return None
+
+    lines: list[str] = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        text = _clean_string(block.get("text"))
+        if text:
+            lines.append(text)
+
+    return _normalize_description_text("\n".join(lines))
+
+
 def _should_fetch_detail(job: Job, *, force: bool) -> bool:
     if job.location is None or job.job_type is None:
         return True
-    if force and (job.salary_range is None or not job.tags):
+    if force and (job.salary_range is None or not job.tags or job.description is None):
         return True
     return False
 

@@ -21,6 +21,12 @@ LISTING_FIXTURE_PATH = FIXTURE_DIR / "glints_listing.html"
 DETAIL_FIXTURE_PATH = FIXTURE_DIR / "glints_job_detail.html"
 FIXTURE_SCRAPED_AT = "2026-03-16T12:00:00Z"
 FIXTURE_DETAIL_JOB_ID = "479cdeee-5dbf-4dbb-8138-0f7634d7eeae"
+FIXTURE_DETAIL_DESCRIPTION = (
+    "Kami sedang mencari kandidat profesional yang berpengalaman di bidang Procurement dan Contract Management untuk bergabung bersama tim kami.\n"
+    "📌 Tanggung jawab utama:\n"
+    "Mengelola proses PR ke PO.\n"
+    "Memastikan akurasi dokumen procurement."
+)
 
 
 def build_raw_job(
@@ -173,6 +179,7 @@ class GlintsParserTests(unittest.TestCase):
         )
         self.assertEqual(first_job.posted_at, "2026-03-16T09:05:54.423Z")
         self.assertEqual(first_job.scraped_at, FIXTURE_SCRAPED_AT)
+        self.assertIsNone(first_job.description)
 
         second_job = jobs[1]
         self.assertEqual(second_job.location, "Jakarta Selatan, DKI Jakarta")
@@ -197,6 +204,7 @@ class GlintsParserTests(unittest.TestCase):
             ],
         )
         self.assertEqual(second_job.scraped_at, FIXTURE_SCRAPED_AT)
+        self.assertIsNone(second_job.description)
 
     def test_parse_jobs_formats_machine_labels_for_job_type_and_tags(self) -> None:
         html = build_listing_html(
@@ -292,6 +300,47 @@ class GlintsScrapeTests(unittest.TestCase):
 
         self.assertEqual([job.job_id for job in jobs], ["page-1-job"])
 
+    def test_scrape_listing_only_best_effort_enrichment_keeps_description_empty(self) -> None:
+        context = Mock()
+        listing_page = Mock()
+        detail_page = Mock()
+        context.new_page.side_effect = [listing_page, detail_page]
+        detail_html = DETAIL_FIXTURE_PATH.read_text(encoding="utf-8")
+        base_job = build_raw_job(
+            FIXTURE_DETAIL_JOB_ID,
+            "2026-03-16T09:05:54.423Z",
+            title="Ahli Gizi",
+            company_name="PT BINAJASA SUMBER SARANA",
+            salary_min=None,
+            salary_max=None,
+            skill_names=[],
+            include_location=False,
+        )
+        base_job["country"] = {}
+        base_job["type"] = None
+        base_job["workArrangementOption"] = None
+        listing_html = build_listing_html(
+            [base_job],
+            has_more=False,
+            url_overrides={
+                FIXTURE_DETAIL_JOB_ID: "/id/opportunities/jobs/ahli-gizi/479cdeee-5dbf-4dbb-8138-0f7634d7eeae"
+            },
+        )
+
+        with (
+            patch(
+                "lokerbot.scrapers.glints._fetch_listing_snapshot",
+                return_value={"html": listing_html, "body_text": ""},
+            ),
+            patch("lokerbot.scrapers.glints._fetch_detail_page_html", return_value=detail_html),
+            patch("lokerbot.scrapers.glints.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
+        ):
+            jobs = _scrape_with_context(context, max_pages=1, fetch_details=False, delay=0.0)
+
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0].location, "Batam, Kepulauan Riau")
+        self.assertIsNone(jobs[0].description)
+
     def test_scrape_best_effort_detail_enrichment_fills_missing_fields(self) -> None:
         context = Mock()
         listing_page = Mock()
@@ -333,6 +382,7 @@ class GlintsScrapeTests(unittest.TestCase):
             jobs[0].tags,
             ["On Site", "Clinical Nutrition", "Nutrition Education", "Food Nutrition", "Nutritionists"],
         )
+        self.assertEqual(jobs[0].description, FIXTURE_DETAIL_DESCRIPTION)
 
 
 class GlintsLiveSmokeTests(unittest.TestCase):

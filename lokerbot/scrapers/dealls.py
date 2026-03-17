@@ -11,7 +11,11 @@ import requests
 from lokerbot.http_client import build_session
 from lokerbot.models import Job, utc_now_iso
 from lokerbot.nextjs import extract_next_data
-from lokerbot.utils import clean_string as _clean_string, humanize_label as _humanize_label
+from lokerbot.utils import (
+    clean_string as _clean_string,
+    humanize_label as _humanize_label,
+    normalize_description_text as _normalize_description_text,
+)
 
 DEALLS_LISTING_URL = "https://dealls.com/loker"
 DEALLS_JOBS_API_URL = "https://api.sejutacita.id/v1/explore-job/job"
@@ -226,10 +230,28 @@ def _enrich_job_from_detail(
     )
     if not job.tags:
         job.tags = _collect_tags(detail)
+    job.description = job.description or _format_description(detail)
+
+
+def _format_description(detail: dict[str, Any]) -> str | None:
+    sections: list[str] = []
+
+    description = _normalize_description_text(detail.get("description"))
+    if description:
+        sections.append(description)
+
+    for heading, key in (("Responsibilities", "responsibilities"), ("Requirements", "requirements")):
+        content = _normalize_description_text(detail.get(key))
+        if content:
+            sections.append(f"{heading}\n{content}")
+
+    if not sections:
+        return None
+    return "\n\n".join(sections)
 
 
 def _should_fetch_detail(job: Job) -> bool:
-    return job.location is None or job.job_type is None
+    return job.location is None or job.job_type is None or job.description is None
 
 
 def _extract_jobs_page(payload: dict[str, Any]) -> dict[str, Any]:

@@ -1,6 +1,167 @@
 <!DOCTYPE html>
 <html lang="id">
   <body>
-    <script id="__NEXT_DATA__" type="application/json">{"props":{"apolloCache":{"Company:d0ac7f32-1352-4d9e-85b0-240a9bf9d1d8":{"__typename":"Company","id":"d0ac7f32-1352-4d9e-85b0-240a9bf9d1d8","name":"PT BINAJASA SUMBER SARANA"},"JobSalary:a639ccda-3254-4b50-89d0-f10891d804cc":{"__typename":"JobSalary","id":"a639ccda-3254-4b50-89d0-f10891d804cc","salaryType":"BASIC","salaryMode":"MONTH","maxAmount":5500000,"minAmount":5300000,"CurrencyCode":"IDR"},"HierarchicalLocation:56db5fd7-72e1-4d52-855c-b7b0d27c3636":{"__typename":"HierarchicalLocation","id":"56db5fd7-72e1-4d52-855c-b7b0d27c3636","name":"Lubuk Baja","administrativeLevelName":"District","formattedName":"Lubuk Baja","level":4,"slug":"lubuk-baja","parents":[{"__typename":"LocationParent","id":"654dbd43-0da6-44a1-8fa6-3f2879b8fbdf","name":"Batam","administrativeLevelName":"City","formattedName":"Batam","level":3,"slug":"batam","CountryCode":"ID","parents":[{"__typename":"LocationGrandParent","level":2,"formattedName":"Kepulauan Riau","slug":"kepulauan-riau"},{"__typename":"LocationGrandParent","level":1,"formattedName":"Indonesia","slug":"indonesia"}]},{"__typename":"LocationParent","id":"df6b267d-5c66-4201-98ce-7a2d77fab698","name":"Kepulauan Riau","administrativeLevelName":"Province","formattedName":"Kepulauan Riau","level":2,"slug":"kepulauan-riau","CountryCode":"ID","parents":[{"__typename":"LocationGrandParent","level":1,"formattedName":"Indonesia","slug":"indonesia"}]},{"__typename":"LocationParent","id":"7542a4d7-4324-4f76-ae1f-2e37ffb1198b","name":"Indonesia","administrativeLevelName":"Country","formattedName":"Indonesia","level":1,"slug":"indonesia","CountryCode":"ID","parents":null}]},"SkillDetail:a06cce87-2f0f-49df-a8ba-766ddff56985":{"__typename":"SkillDetail","id":"a06cce87-2f0f-49df-a8ba-766ddff56985","name":"Clinical Nutrition"},"SkillDetail:dd8e7d16-3f71-43b4-8de1-f6efdcf6fe2a":{"__typename":"SkillDetail","id":"dd8e7d16-3f71-43b4-8de1-f6efdcf6fe2a","name":"Nutrition Education"},"SkillDetail:55578987-84fb-44d2-acf2-b3aca33e8e30":{"__typename":"SkillDetail","id":"55578987-84fb-44d2-acf2-b3aca33e8e30","name":"Food Nutrition"},"SkillDetail:95d10c21-885a-46a2-b97b-b209d741161c":{"__typename":"SkillDetail","id":"95d10c21-885a-46a2-b97b-b209d741161c","name":"Nutritionists"},"Job:479cdeee-5dbf-4dbb-8138-0f7634d7eeae":{"__typename":"Job","id":"479cdeee-5dbf-4dbb-8138-0f7634d7eeae","title":"Ahli Gizi","workArrangementOption":"ONSITE","status":"OPEN","createdAt":"2026-03-16T09:05:54.423Z","updatedAt":"2026-03-16T09:05:55.757Z","type":"FULL_TIME","company":{"__ref":"Company:d0ac7f32-1352-4d9e-85b0-240a9bf9d1d8"},"country":{"code":"ID","name":"Indonesia"},"location":{"__ref":"HierarchicalLocation:56db5fd7-72e1-4d52-855c-b7b0d27c3636"},"salaries":[{"__ref":"JobSalary:a639ccda-3254-4b50-89d0-f10891d804cc"}],"skills":[{"__typename":"Skill","skill":{"__ref":"SkillDetail:a06cce87-2f0f-49df-a8ba-766ddff56985"},"mustHave":true},{"__typename":"Skill","skill":{"__ref":"SkillDetail:dd8e7d16-3f71-43b4-8de1-f6efdcf6fe2a"},"mustHave":true},{"__typename":"Skill","skill":{"__ref":"SkillDetail:55578987-84fb-44d2-acf2-b3aca33e8e30"},"mustHave":true},{"__typename":"Skill","skill":{"__ref":"SkillDetail:95d10c21-885a-46a2-b97b-b209d741161c"},"mustHave":true}]}}}}</script>
+    <script id="__NEXT_DATA__" type="application/json">
+      {
+        "props": {
+          "apolloCache": {
+            "Company:d0ac7f32-1352-4d9e-85b0-240a9bf9d1d8": {
+              "__typename": "Company",
+              "id": "d0ac7f32-1352-4d9e-85b0-240a9bf9d1d8",
+              "name": "PT BINAJASA SUMBER SARANA"
+            },
+            "JobSalary:a639ccda-3254-4b50-89d0-f10891d804cc": {
+              "__typename": "JobSalary",
+              "id": "a639ccda-3254-4b50-89d0-f10891d804cc",
+              "salaryType": "BASIC",
+              "salaryMode": "MONTH",
+              "maxAmount": 5500000,
+              "minAmount": 5300000,
+              "CurrencyCode": "IDR"
+            },
+            "HierarchicalLocation:56db5fd7-72e1-4d52-855c-b7b0d27c3636": {
+              "__typename": "HierarchicalLocation",
+              "id": "56db5fd7-72e1-4d52-855c-b7b0d27c3636",
+              "name": "Lubuk Baja",
+              "administrativeLevelName": "District",
+              "formattedName": "Lubuk Baja",
+              "level": 4,
+              "slug": "lubuk-baja",
+              "parents": [
+                {
+                  "__typename": "LocationParent",
+                  "id": "654dbd43-0da6-44a1-8fa6-3f2879b8fbdf",
+                  "name": "Batam",
+                  "administrativeLevelName": "City",
+                  "formattedName": "Batam",
+                  "level": 3,
+                  "slug": "batam",
+                  "CountryCode": "ID",
+                  "parents": [
+                    {
+                      "__typename": "LocationGrandParent",
+                      "level": 2,
+                      "formattedName": "Kepulauan Riau",
+                      "slug": "kepulauan-riau"
+                    },
+                    {
+                      "__typename": "LocationGrandParent",
+                      "level": 1,
+                      "formattedName": "Indonesia",
+                      "slug": "indonesia"
+                    }
+                  ]
+                },
+                {
+                  "__typename": "LocationParent",
+                  "id": "df6b267d-5c66-4201-98ce-7a2d77fab698",
+                  "name": "Kepulauan Riau",
+                  "administrativeLevelName": "Province",
+                  "formattedName": "Kepulauan Riau",
+                  "level": 2,
+                  "slug": "kepulauan-riau",
+                  "CountryCode": "ID",
+                  "parents": [
+                    {
+                      "__typename": "LocationGrandParent",
+                      "level": 1,
+                      "formattedName": "Indonesia",
+                      "slug": "indonesia"
+                    }
+                  ]
+                },
+                {
+                  "__typename": "LocationParent",
+                  "id": "7542a4d7-4324-4f76-ae1f-2e37ffb1198b",
+                  "name": "Indonesia",
+                  "administrativeLevelName": "Country",
+                  "formattedName": "Indonesia",
+                  "level": 1,
+                  "slug": "indonesia",
+                  "CountryCode": "ID",
+                  "parents": null
+                }
+              ]
+            },
+            "SkillDetail:a06cce87-2f0f-49df-a8ba-766ddff56985": {
+              "__typename": "SkillDetail",
+              "id": "a06cce87-2f0f-49df-a8ba-766ddff56985",
+              "name": "Clinical Nutrition"
+            },
+            "SkillDetail:dd8e7d16-3f71-43b4-8de1-f6efdcf6fe2a": {
+              "__typename": "SkillDetail",
+              "id": "dd8e7d16-3f71-43b4-8de1-f6efdcf6fe2a",
+              "name": "Nutrition Education"
+            },
+            "SkillDetail:55578987-84fb-44d2-acf2-b3aca33e8e30": {
+              "__typename": "SkillDetail",
+              "id": "55578987-84fb-44d2-acf2-b3aca33e8e30",
+              "name": "Food Nutrition"
+            },
+            "SkillDetail:95d10c21-885a-46a2-b97b-b209d741161c": {
+              "__typename": "SkillDetail",
+              "id": "95d10c21-885a-46a2-b97b-b209d741161c",
+              "name": "Nutritionists"
+            },
+            "Job:479cdeee-5dbf-4dbb-8138-0f7634d7eeae": {
+              "__typename": "Job",
+              "id": "479cdeee-5dbf-4dbb-8138-0f7634d7eeae",
+              "title": "Ahli Gizi",
+              "descriptionJsonString": "{\"blocks\":[{\"entityRanges\":[],\"inlineStyleRanges\":[],\"key\":\"intro\",\"data\":{},\"text\":\"Kami sedang mencari kandidat profesional yang berpengalaman di bidang Procurement dan Contract Management untuk bergabung bersama tim kami.\",\"type\":\"unstyled\",\"depth\":0},{\"entityRanges\":[],\"inlineStyleRanges\":[],\"key\":\"heading\",\"data\":{},\"text\":\"📌 Tanggung jawab utama:\",\"type\":\"unstyled\",\"depth\":0},{\"entityRanges\":[],\"inlineStyleRanges\":[],\"key\":\"item-1\",\"data\":{},\"text\":\"Mengelola proses PR ke PO.\",\"type\":\"unordered-list-item\",\"depth\":0},{\"entityRanges\":[],\"inlineStyleRanges\":[],\"key\":\"item-2\",\"data\":{},\"text\":\"Memastikan akurasi dokumen procurement.\",\"type\":\"unordered-list-item\",\"depth\":0}],\"entityMap\":{}}",
+              "workArrangementOption": "ONSITE",
+              "status": "OPEN",
+              "createdAt": "2026-03-16T09:05:54.423Z",
+              "updatedAt": "2026-03-16T09:05:55.757Z",
+              "type": "FULL_TIME",
+              "company": {
+                "__ref": "Company:d0ac7f32-1352-4d9e-85b0-240a9bf9d1d8"
+              },
+              "country": {
+                "code": "ID",
+                "name": "Indonesia"
+              },
+              "location": {
+                "__ref": "HierarchicalLocation:56db5fd7-72e1-4d52-855c-b7b0d27c3636"
+              },
+              "salaries": [
+                {
+                  "__ref": "JobSalary:a639ccda-3254-4b50-89d0-f10891d804cc"
+                }
+              ],
+              "skills": [
+                {
+                  "__typename": "Skill",
+                  "skill": {
+                    "__ref": "SkillDetail:a06cce87-2f0f-49df-a8ba-766ddff56985"
+                  },
+                  "mustHave": true
+                },
+                {
+                  "__typename": "Skill",
+                  "skill": {
+                    "__ref": "SkillDetail:dd8e7d16-3f71-43b4-8de1-f6efdcf6fe2a"
+                  },
+                  "mustHave": true
+                },
+                {
+                  "__typename": "Skill",
+                  "skill": {
+                    "__ref": "SkillDetail:55578987-84fb-44d2-acf2-b3aca33e8e30"
+                  },
+                  "mustHave": true
+                },
+                {
+                  "__typename": "Skill",
+                  "skill": {
+                    "__ref": "SkillDetail:95d10c21-885a-46a2-b97b-b209d741161c"
+                  },
+                  "mustHave": true
+                }
+              ]
+            }
+          }
+        }
+      }
+    </script>
   </body>
 </html>

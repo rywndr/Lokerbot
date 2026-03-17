@@ -17,6 +17,7 @@ class Job:
     job_type: str | None
     salary_range: str | None
     url: str
+    description: str | None = None
     tags: list[str] = field(default_factory=list)
     posted_at: str | None = None
     scraped_at: str = field(default_factory=utc_now_iso)
@@ -30,6 +31,7 @@ class Job:
             "job_type": self.job_type,
             "salary_range": self.salary_range,
             "url": self.url,
+            "description": self.description,
             "tags": list(self.tags),
             "posted_at": self.posted_at,
             "scraped_at": self.scraped_at,
