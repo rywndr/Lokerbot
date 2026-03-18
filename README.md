@@ -7,9 +7,9 @@ Lokerbot is a scraping engine for Indonesian job boards, mainly built for a hack
 Implemented:
 - [Dealls](https://dealls.com/loker)
 - [Glints](https://glints.com/id)
+- [KitaLulus](https://www.kitalulus.com)
 
 Planned:
-- [KitaLulus](https://www.kitalulus.com)
 - [Karirhub Kemnaker](https://karirhub.kemnaker.go.id)
 - [Loker.id](https://www.loker.id/cari-lowongan-kerja)
 
@@ -24,7 +24,7 @@ python -m playwright install firefox
 
 ## Run
 
-The CLI currently supports `dealls` and `glints`, and still defaults to `dealls` for backward compatibility.
+The CLI currently supports `dealls`, `glints`, and `kitalulus`, and still defaults to `dealls` for backward compatibility.
 
 `--max-pages` defaults to `1`, so the backward-compatible behavior is still a single results page. Use `--all-pages` to let the selected scraper paginate through every available page it can reach. `--max-pages` and `--all-pages` are mutually exclusive
 
@@ -41,6 +41,7 @@ Explicit source selection:
 ```bash
 python main.py --source dealls --max-pages 1
 python main.py --source glints --max-pages 1
+python main.py --source kitalulus --max-pages 1
 ```
 
 More examples:
@@ -53,11 +54,14 @@ python main.py --source glints --max-pages 2
 python main.py --source glints --max-pages 1 --fetch-details
 python main.py --source glints --all-pages
 python main.py --source glints --max-pages 1 --output-dir output
+python main.py --source kitalulus --max-pages 3
+python main.py --source kitalulus --all-pages
+python main.py --source kitalulus --max-pages 1 --fetch-details
 ```
 
 JSON snapshots are written under `output/<source>/`.
 
-Dealls and Glints snapshots only include listings whose `posted_at` falls between the scrape time and 30 days back, so older or future-dated jobs are excluded from the saved output.
+All scraper implementations (Dealls, Glints, and KitaLulus) only include listings whose `posted_at` falls between the scrape time and 30 days back, so older or future-dated jobs are excluded from the saved output.
 
 ## Output shape
 
@@ -102,6 +106,21 @@ Current limitations:
 - It only captures data that Glints exposes on the public listings and detail pages. If those client-rendered payloads or DOM hooks change, the scraper will need to be updated
 - `--fetch-details` is best-effort enrichment, so missing fields from a blocked or changed detail page are left as is instead of aborting the full scrape
 - `--all-pages` can still stop before the logical end of the listing set if Glints switches later pages to a login prompt or otherwise stops exposing public jobs
+
+## How the KitaLulus scraper works
+
+Workflow:
+1. Fires GraphQL API requests to `https://gql.kitalulus.com/graphql` with `vacanciesV3` operation
+2. Use persisted query hashes and Apollo CSRF protection headers to fetch job listings from the public API
+3. Parse vacancy objects from the GraphQL response and normalize it into shared `Job` model
+4. Filter jobs to only include those updated (refreshed) within the last 30 days (KitaLulus uses `updatedAt` to reflect when jobs were last bumped/refreshed, not when they were originally created)
+5. Optionally enrich jobs with additional detail data (currently a placeholder as listing data is already comprehensive)
+6. Support pagination via the GraphQL `page` parameter and `hasNextPage` indicator
+
+Current limitations:
+- The scraper depends on the KitaLulus GraphQL API structure staying stable. If the API schema, operation names, or persisted query hashes change, the scraper will need to be updated
+- `--fetch-details` is currently a placeholder since the listing API already provides comprehensive job data including descriptions, tags, location, and salary information
+- The scraper uses the default DKI Jakarta province filter
 
 ## Shared helpers
 
