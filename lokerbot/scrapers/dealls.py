@@ -64,6 +64,7 @@ def scrape(
     fetch_details: bool = False,
     delay: float = 0.0,
     session: requests.Session | None = None,
+    progress: Any | None = None,
 ) -> list[Job]:
     if max_pages is not None and max_pages < 1:
         raise ValueError("max_pages must be at least 1")
@@ -100,6 +101,9 @@ def scrape(
         else:
             last_page = min(max_pages, total_pages) if isinstance(total_pages, int) and total_pages > 0 else max_pages
 
+        if progress is not None:
+            progress(f"page 1/{last_page} • {len(jobs)} jobs")
+
         for page in range(2, last_page + 1):
             if delay:
                 time.sleep(delay)
@@ -123,7 +127,11 @@ def scrape(
                     scraped_at=scraped_at,
                 )
             )
+            if progress is not None:
+                progress(f"page {page}/{last_page} • {len(jobs)} jobs")
 
+        if progress is not None:
+            progress(f"done • {len(jobs)} jobs")
         return jobs
     finally:
         if owns_session:

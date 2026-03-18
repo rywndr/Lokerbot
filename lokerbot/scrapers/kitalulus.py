@@ -31,6 +31,7 @@ def scrape(
     fetch_details: bool = False,
     delay: float = 0.0,
     session: requests.Session | None = None,
+    progress: Any | None = None,
 ) -> list[Job]:
     if session is None:
         session = _build_session()
@@ -44,6 +45,9 @@ def scrape(
     while True:
         if max_pages is not None and page_num >= max_pages:
             break
+
+        if progress is not None:
+            progress(f"loading page {page_num + 1}")
 
         try:
             response_data = _fetch_vacancies_page(
@@ -75,6 +79,10 @@ def scrape(
             scraped_at_dt=scraped_at_dt,
         )
 
+        if progress is not None:
+            total_text = total_pages_available if total_pages_available is not None else "?"
+            progress(f"page {page_num + 1}/{total_text} • {len(page_jobs)} jobs")
+
         if not page_jobs:
             print(f"No recent jobs found on page {page_num + 1}, stopping pagination")
             break
@@ -101,6 +109,8 @@ def scrape(
         if delay > 0:
             time.sleep(delay)
 
+    if progress is not None:
+        progress(f"done • {len(all_jobs)} jobs")
     return all_jobs
 
 

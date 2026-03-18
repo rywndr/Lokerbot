@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 
+from lokerbot.cli_progress import run_scraper_with_progress
 from lokerbot.scrapers import DEFAULT_SOURCE, SCRAPERS
 
 
@@ -47,7 +48,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     scraper = SCRAPERS[args.source]
     max_pages = None if args.all_pages else args.max_pages
-    jobs = scraper(max_pages=max_pages, fetch_details=args.fetch_details, delay=args.delay)
+    jobs = run_scraper_with_progress(
+        args.source,
+        scraper,
+        max_pages=max_pages,
+        fetch_details=args.fetch_details,
+        delay=args.delay,
+    )
 
     output_dir = Path(args.output_dir) / args.source
     output_dir.mkdir(parents=True, exist_ok=True)

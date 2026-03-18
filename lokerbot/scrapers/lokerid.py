@@ -59,6 +59,7 @@ def scrape(
     fetch_details: bool = False,
     delay: float = 0.0,
     browser_name: str = DEFAULT_BROWSER_NAME,
+    progress: Any | None = None,
 ) -> list[Job]:
     if max_pages is not None and max_pages < 1:
         raise ValueError("max_pages must be at least 1")
@@ -75,6 +76,7 @@ def scrape(
                     max_pages=max_pages,
                     fetch_details=fetch_details,
                     delay=delay,
+                    progress=progress,
                 )
             finally:
                 context.close()
@@ -88,6 +90,7 @@ def _scrape_with_context(
     max_pages: int | None,
     fetch_details: bool,
     delay: float,
+    progress: Any | None = None,
 ) -> list[Job]:
     listing_page = context.new_page()
     detail_page = None
@@ -106,12 +109,19 @@ def _scrape_with_context(
             if page_number > 1 and delay:
                 time.sleep(delay)
 
+            if progress is not None:
+                progress(f"loading page {page_number}")
+
             listing_page.goto(_build_listing_url(page_number), wait_until="networkidle", timeout=PAGE_TIMEOUT_MS)
             html = listing_page.content()
             page_jobs, page_meta = _parse_listing_html(html, scraped_at=scraped_at, scraped_at_dt=scraped_at_dt)
 
             if last_page is None:
                 last_page = _extract_last_page(page_meta)
+
+            if progress is not None:
+                total_text = last_page if last_page is not None else "?"
+                progress(f"page {page_number}/{total_text} • {len(page_jobs)} jobs")
 
             for job in page_jobs:
                 if not _is_recent_job_post(job.posted_at, scraped_at_dt):
@@ -143,11 +153,15 @@ def _scrape_with_context(
                 break
 
             page_number += 1
+            if progress is not None:
+                progress(f"loading page {page_number}")
     finally:
         listing_page.close()
         if detail_page is not None:
             detail_page.close()
 
+    if progress is not None:
+        progress(f"done • {len(jobs)} jobs")
     return jobs
 
 

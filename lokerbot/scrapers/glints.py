@@ -79,6 +79,7 @@ def scrape(
     fetch_details: bool = False,
     delay: float = 0.0,
     browser_name: str = DEFAULT_BROWSER_NAME,
+    progress: Any | None = None,
 ) -> list[Job]:
     if max_pages is not None and max_pages < 1:
         raise ValueError("max_pages must be at least 1")
@@ -95,6 +96,7 @@ def scrape(
                     max_pages=max_pages,
                     fetch_details=fetch_details,
                     delay=delay,
+                    progress=progress,
                 )
             finally:
                 context.close()
@@ -108,6 +110,7 @@ def _scrape_with_context(
     max_pages: int | None,
     fetch_details: bool,
     delay: float,
+    progress: Any | None = None,
 ) -> list[Job]:
     listing_page = context.new_page()
     detail_page: Page | None = None
@@ -124,6 +127,10 @@ def _scrape_with_context(
     while True:
         if page_number > 1 and delay:
             time.sleep(delay)
+
+        if progress is not None:
+            page_text = f"page {page_number}/{max_pages}" if max_pages is not None else f"page {page_number}"
+            progress(f"loading {page_text}")
 
         snapshot = _fetch_listing_snapshot(listing_page, page_number)
         try:
@@ -168,12 +175,18 @@ def _scrape_with_context(
 
         jobs.extend(page_jobs)
 
+        if progress is not None:
+            page_text = f"page {page_number}/{max_pages}" if max_pages is not None else f"page {page_number}"
+            progress(f"{page_text} • {len(page_jobs)} jobs")
+
         if max_pages is not None and page_number >= max_pages:
             break
         if not bool(page_data.get("hasMore")):
             break
         page_number += 1
 
+    if progress is not None:
+        progress(f"done • {len(jobs)} jobs")
     return jobs
 
 

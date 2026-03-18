@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import main
 from lokerbot.models import Job
@@ -47,7 +47,8 @@ class MainCliTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir, patch.object(main, "SCRAPERS", {"karirhub": scraper}):
             stdout = io.StringIO()
-            with redirect_stdout(stdout):
+            stderr = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
                 exit_code = main.main(["--source", "karirhub", "--all-pages", "--output-dir", tmpdir])
 
             output_dir = Path(tmpdir) / "karirhub"
@@ -56,22 +57,25 @@ class MainCliTests(unittest.TestCase):
             output_path = output_paths[0]
 
         self.assertEqual(exit_code, 0)
-        scraper.assert_called_once_with(max_pages=None, fetch_details=False, delay=0.0)
+        scraper.assert_called_once_with(max_pages=None, fetch_details=False, delay=0.0, progress=ANY)
         self.assertEqual(len(output_paths), 1)
         self.assertEqual(payload, [build_job("karirhub-job").to_dict()])
         self.assertIn(str(output_path), stdout.getvalue())
         self.assertIn("from karirhub", stdout.getvalue())
+        self.assertIn("[karirhub] starting scrape", stderr.getvalue())
+        self.assertIn("[karirhub] finished scrape", stderr.getvalue())
 
     def test_main_uses_default_source_when_flag_omitted(self) -> None:
         scraper = Mock(return_value=[build_job("default-job")])
 
         with tempfile.TemporaryDirectory() as tmpdir, patch.object(main, "SCRAPERS", {DEFAULT_SOURCE: scraper}):
             stdout = io.StringIO()
-            with redirect_stdout(stdout):
+            stderr = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
                 exit_code = main.main(["--output-dir", tmpdir])
 
         self.assertEqual(exit_code, 0)
-        scraper.assert_called_once_with(max_pages=1, fetch_details=False, delay=0.0)
+        scraper.assert_called_once_with(max_pages=1, fetch_details=False, delay=0.0, progress=ANY)
         self.assertIn(f"from {DEFAULT_SOURCE}", stdout.getvalue())
 
     def test_main_routes_explicit_source_and_writes_output_under_source_directory(self) -> None:
@@ -79,7 +83,8 @@ class MainCliTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir, patch.object(main, "SCRAPERS", {DEFAULT_SOURCE: scraper}):
             stdout = io.StringIO()
-            with redirect_stdout(stdout):
+            stderr = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
                 exit_code = main.main(
                     [
                         "--source",
@@ -100,7 +105,7 @@ class MainCliTests(unittest.TestCase):
             output_path = output_paths[0]
 
         self.assertEqual(exit_code, 0)
-        scraper.assert_called_once_with(max_pages=3, fetch_details=True, delay=0.25)
+        scraper.assert_called_once_with(max_pages=3, fetch_details=True, delay=0.25, progress=ANY)
         self.assertEqual(len(output_paths), 1)
         self.assertEqual(payload, [build_job("explicit-job").to_dict()])
         self.assertIn(str(output_path), stdout.getvalue())
@@ -110,11 +115,12 @@ class MainCliTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir, patch.object(main, "SCRAPERS", {DEFAULT_SOURCE: scraper}):
             stdout = io.StringIO()
-            with redirect_stdout(stdout):
+            stderr = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
                 exit_code = main.main(["--source", DEFAULT_SOURCE, "--all-pages", "--output-dir", tmpdir])
 
         self.assertEqual(exit_code, 0)
-        scraper.assert_called_once_with(max_pages=None, fetch_details=False, delay=0.0)
+        scraper.assert_called_once_with(max_pages=None, fetch_details=False, delay=0.0, progress=ANY)
         self.assertIn(f"from {DEFAULT_SOURCE}", stdout.getvalue())
 
     def test_main_routes_glints_source_and_writes_output_under_glints_directory(self) -> None:
@@ -127,7 +133,8 @@ class MainCliTests(unittest.TestCase):
             {DEFAULT_SOURCE: default_scraper, "glints": glints_scraper},
         ):
             stdout = io.StringIO()
-            with redirect_stdout(stdout):
+            stderr = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
                 exit_code = main.main(["--source", "glints", "--output-dir", tmpdir])
 
             output_dir = Path(tmpdir) / "glints"
@@ -137,11 +144,13 @@ class MainCliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         default_scraper.assert_not_called()
-        glints_scraper.assert_called_once_with(max_pages=1, fetch_details=False, delay=0.0)
+        glints_scraper.assert_called_once_with(max_pages=1, fetch_details=False, delay=0.0, progress=ANY)
         self.assertEqual(len(output_paths), 1)
         self.assertEqual(payload, [build_job("glints-job").to_dict()])
         self.assertIn(str(output_path), stdout.getvalue())
         self.assertIn("from glints", stdout.getvalue())
+        self.assertIn("[glints] starting scrape", stderr.getvalue())
+        self.assertIn("[glints] finished scrape", stderr.getvalue())
 
     def test_parse_args_rejects_invalid_source(self) -> None:
         stderr = io.StringIO()

@@ -60,6 +60,7 @@ def scrape(
     delay: float = 0.0,
     session: requests.Session | None = None,
     browser_name: str = DEFAULT_BROWSER_NAME,
+    progress: Any | None = None,
 ) -> list[Job]:
     if max_pages is not None and max_pages < 1:
         raise ValueError("max_pages must be at least 1")
@@ -81,6 +82,8 @@ def scrape(
             context = browser.new_context(locale="id-ID", viewport={"width": 1280, "height": 720})
             try:
                 page = context.new_page()
+                if progress is not None:
+                    progress(f"loading page {page_number}")
                 _load_listing_page(page, page_number)
 
                 while True:
@@ -117,6 +120,9 @@ def scrape(
 
                     all_jobs.extend(new_jobs)
 
+                    if progress is not None:
+                        progress(f"page {page_number} • {len(new_jobs)} jobs")
+
                     if max_pages is not None and page_number >= max_pages:
                         break
 
@@ -124,6 +130,8 @@ def scrape(
                         break
 
                     page_number += 1
+                    if progress is not None:
+                        progress(f"loading page {page_number}")
                     if delay > 0:
                         time.sleep(delay)
             finally:
@@ -133,6 +141,9 @@ def scrape(
 
     if owns_session:
         session.close()
+
+    if progress is not None:
+        progress(f"done • {len(all_jobs)} jobs")
 
     return all_jobs
 
