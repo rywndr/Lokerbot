@@ -10,7 +10,7 @@ Lokerbot is a scraping engine for Indonesian job boards, mainly built for a hack
 | Glints | Implemented | [glints](./_docs/glints.md) |
 | KitaLulus | Implemented | [kitalulus](./_docs/kitalulus.md) |
 | Karirhub Kemnaker | Implemented | [karirhub](./_docs/karirhub.md) |
-| Loker.id | Planned | soon |
+| Loker.id | Implemented | [lokerid](./_docs/lokerid.md) |
 
 ## Setup
 
@@ -23,11 +23,13 @@ python -m playwright install firefox
 
 ## Run
 
-The CLI supports `dealls`, `glints`, `kitalulus`, and `karirhub`, and defaults to `dealls` for backward compatibility.
+The CLI supports `dealls`, `glints`, `kitalulus`, `karirhub`, and `lokerid`, and defaults to `dealls` for backward compatibility.
 
 `--max-pages` defaults to `1`, so the backward-compatible behavior is still a single results page. Use `--all-pages` to let the selected scraper paginate through every available page it can reach. `--max-pages` and `--all-pages` are mutually exclusive.
 
 Use `--fetch-details` to enrich listings with source-owned detail data. When enabled, snapshots can include missing location, job type, salary, tags, and a plain-text `description`. Without `--fetch-details`, `description` stays `null`.
+
+`lokerid` is a browser-driven scraper. It reads the public listings page, prefers the embedded Remix loader payload, falls back to rendered job cards when needed, and opens detail pages only when the listing data is incomplete.
 
 ### Examples
 
@@ -38,6 +40,7 @@ python main.py --source glints --all-pages
 python main.py --source kitalulus --max-pages 1 --fetch-details
 python main.py --source karirhub --max-pages 3
 python main.py --source karirhub --all-pages
+python main.py --source lokerid --max-pages 1
 ```
 
 ## Output
@@ -68,6 +71,7 @@ All scraper implementations only include listings whose `posted_at` falls betwee
 - [Glints](./_docs/glints.md)
 - [KitaLulus](./_docs/kitalulus.md)
 - [Karirhub](./_docs/karirhub.md)
+- [Loker.id](./_docs/lokerid.md)
 
 ## Shared helpers
 
