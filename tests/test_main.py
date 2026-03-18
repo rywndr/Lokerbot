@@ -36,6 +36,32 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(args.max_pages, 1)
         self.assertFalse(args.all_pages)
 
+    def test_parse_args_accepts_karirhub_source(self) -> None:
+        args = main.parse_args(["--source", "karirhub"])
+
+        self.assertIn("karirhub", main.SCRAPERS)
+        self.assertEqual(args.source, "karirhub")
+
+    def test_main_routes_all_pages_to_karirhub_source(self) -> None:
+        scraper = Mock(return_value=[build_job("karirhub-job")])
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(main, "SCRAPERS", {"karirhub": scraper}):
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main.main(["--source", "karirhub", "--all-pages", "--output-dir", tmpdir])
+
+            output_dir = Path(tmpdir) / "karirhub"
+            output_paths = list(output_dir.glob("karirhub_*.json"))
+            payload = json.loads(output_paths[0].read_text(encoding="utf-8"))
+            output_path = output_paths[0]
+
+        self.assertEqual(exit_code, 0)
+        scraper.assert_called_once_with(max_pages=None, fetch_details=False, delay=0.0)
+        self.assertEqual(len(output_paths), 1)
+        self.assertEqual(payload, [build_job("karirhub-job").to_dict()])
+        self.assertIn(str(output_path), stdout.getvalue())
+        self.assertIn("from karirhub", stdout.getvalue())
+
     def test_main_uses_default_source_when_flag_omitted(self) -> None:
         scraper = Mock(return_value=[build_job("default-job")])
 

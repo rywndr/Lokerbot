@@ -1,0 +1,32 @@
+{
+  "data": [
+    {
+      "id": "job-1",
+      "_id": "job-1",
+      "job_id": "job-1",
+      "title": "Backend Engineer",
+      "company_name": "PT Example Tech",
+      "city_name": "Jakarta Selatan",
+      "job_type_name": "Full Time",
+      "published_at": 1773648000,
+      "show_salary": true,
+      "min_salary_amount": 5000000,
+      "max_salary_amount": 8000000,
+      "skills": ["Python", "SQL", "Python"],
+      "job_function_name": "Engineering"
+    },
+    {
+      "id": "job-2",
+      "_id": "job-2",
+      "job_id": "job-2",
+      "title": "Frontend Engineer",
+      "company_name": "PT Example Studio",
+      "city_name": "Bandung",
+      "job_type_name": "Contract",
+      "published_at": 1773644400,
+      "show_salary": false,
+      "skills": [],
+      "job_function_name": "Web Development"
+    }
+  ]
+}
