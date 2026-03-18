@@ -8,9 +8,9 @@ Implemented:
 - [Dealls](https://dealls.com/loker)
 - [Glints](https://glints.com/id)
 - [KitaLulus](https://www.kitalulus.com)
+- [Karirhub Kemnaker](https://karirhub.kemnaker.go.id)
 
 Planned:
-- [Karirhub Kemnaker](https://karirhub.kemnaker.go.id)
 - [Loker.id](https://www.loker.id/cari-lowongan-kerja)
 
 ## Setup
@@ -24,7 +24,7 @@ python -m playwright install firefox
 
 ## Run
 
-The CLI currently supports `dealls`, `glints`, and `kitalulus`, and still defaults to `dealls` for backward compatibility.
+The CLI currently supports `dealls`, `glints`, `kitalulus`, and `karirhub`, and still defaults to `dealls` for backward compatibility.
 
 `--max-pages` defaults to `1`, so the backward-compatible behavior is still a single results page. Use `--all-pages` to let the selected scraper paginate through every available page it can reach. `--max-pages` and `--all-pages` are mutually exclusive
 
@@ -57,11 +57,14 @@ python main.py --source glints --max-pages 1 --output-dir output
 python main.py --source kitalulus --max-pages 3
 python main.py --source kitalulus --all-pages
 python main.py --source kitalulus --max-pages 1 --fetch-details
+python main.py --source karirhub --max-pages 3
+python main.py --source karirhub --all-pages
+python main.py --source karirhub --max-pages 1 --fetch-details
 ```
 
 JSON snapshots are written under `output/<source>/`.
 
-All scraper implementations (Dealls, Glints, and KitaLulus) only include listings whose `posted_at` falls between the scrape time and 30 days back, so older or future-dated jobs are excluded from the saved output.
+All scraper implementations (Dealls, Glints, KitaLulus, and Karirhub) only include listings whose `posted_at` falls between the scrape time and 30 days back, so older or future-dated jobs are excluded from the saved output.
 
 ## Output shape
 
@@ -121,6 +124,23 @@ Current limitations:
 - The scraper depends on the KitaLulus GraphQL API structure staying stable. If the API schema, operation names, or persisted query hashes change, the scraper will need to be updated
 - `--fetch-details` is currently a placeholder since the listing API already provides comprehensive job data including descriptions, tags, location, and salary information
 - The scraper uses the default DKI Jakarta province filter
+
+## How the Karirhub scraper works
+
+Workflow:
+1. Uses Playwright @Karirhub domestic listings page at `https://karirhub.kemnaker.go.id/lowongan-dalam-negeri/lowongan`
+2. Read the rendered domestic vacancy cards from the page DOM and fetch the matching public listing API payload from the same browser session
+3. Combine the DOM card data with the API response so each normalized record keeps a stable job ID, posted timestamp, and public detail URL
+4. Normalize each listing into shared `Job` model and keep only jobs posted within the last 30 days
+5. Optionally fetch detail pages to enrich missing fields with best-effort plain-text description, location, job type, salary, and tags
+6. Continue pagination until no new jobs are found or the selected page limit is reached
+
+Current limitations:
+- if the `--all-pages` flag is included, runtime can be longer than the other scrapers because its browser-driven and may require multiple page navigations plus if the `--fetch-details` flag is included, each listing's detail page requires an additional navigation. The scraper tries to mitigate this with concurrent enrichment requests but it is still slower than the API-driven scrapers
+- The scraper depends on the current public DOM structure and listing API shape. If it changes, the parsing logic will need to be updated
+- `--fetch-details` is best-effort, so failed detail requests are logged by the scraper but listing output is still saved
+- The pagination flow is supported with Playwright, so Karirhub requires the browser to be installed
+- Because the current implementation hogs runtime, it is recommended to use `--max-pages` to minimialize runtime, especially if `--fetch-details` is included. Though the implementation may be optimized in the future to handle more pages and details within a reasonable runtime
 
 ## Shared helpers
 
