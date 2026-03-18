@@ -2,16 +2,15 @@
 
 Lokerbot is a scraping engine for Indonesian job boards, mainly built for a hackathon project.
 
-## Current status
+## Supported sources
 
-Implemented:
-- [Dealls](https://dealls.com/loker)
-- [Glints](https://glints.com/id)
-- [KitaLulus](https://www.kitalulus.com)
-- [Karirhub Kemnaker](https://karirhub.kemnaker.go.id)
-
-Planned:
-- [Loker.id](https://www.loker.id/cari-lowongan-kerja)
+| Source | Status | Docs |
+| --- | --- | --- |
+| Dealls | Implemented | [dealls](./_docs/dealls.md) |
+| Glints | Implemented | [glints](./_docs/glints.md) |
+| KitaLulus | Implemented | [kitalulus](./_docs/kitalulus.md) |
+| Karirhub Kemnaker | Implemented | [karirhub](./_docs/karirhub.md) |
+| Loker.id | Planned | soon |
 
 ## Setup
 
@@ -24,49 +23,26 @@ python -m playwright install firefox
 
 ## Run
 
-The CLI currently supports `dealls`, `glints`, `kitalulus`, and `karirhub`, and still defaults to `dealls` for backward compatibility.
+The CLI supports `dealls`, `glints`, `kitalulus`, and `karirhub`, and defaults to `dealls` for backward compatibility.
 
-`--max-pages` defaults to `1`, so the backward-compatible behavior is still a single results page. Use `--all-pages` to let the selected scraper paginate through every available page it can reach. `--max-pages` and `--all-pages` are mutually exclusive
+`--max-pages` defaults to `1`, so the backward-compatible behavior is still a single results page. Use `--all-pages` to let the selected scraper paginate through every available page it can reach. `--max-pages` and `--all-pages` are mutually exclusive.
 
-Use `--fetch-details` to enrich listings with source-owned detail data. When enabled, snapshots can include additional fields such as missing location, job type, salary, tags, and a plain-text `description`. Without `--fetch-details`, `description` stays `null`
+Use `--fetch-details` to enrich listings with source-owned detail data. When enabled, snapshots can include missing location, job type, salary, tags, and a plain-text `description`. Without `--fetch-details`, `description` stays `null`.
 
-Backward-compatible usage:
+### Examples
 
 ```bash
 python main.py --max-pages 1
-```
-
-Explicit source selection:
-
-```bash
-python main.py --source dealls --max-pages 1
-python main.py --source glints --max-pages 1
-python main.py --source kitalulus --max-pages 1
-```
-
-More examples:
-
-```bash
 python main.py --source dealls --max-pages 3
-python main.py --source dealls --all-pages
-python main.py --source dealls --max-pages 1 --fetch-details
-python main.py --source glints --max-pages 2
-python main.py --source glints --max-pages 1 --fetch-details
 python main.py --source glints --all-pages
-python main.py --source glints --max-pages 1 --output-dir output
-python main.py --source kitalulus --max-pages 3
-python main.py --source kitalulus --all-pages
 python main.py --source kitalulus --max-pages 1 --fetch-details
 python main.py --source karirhub --max-pages 3
 python main.py --source karirhub --all-pages
-python main.py --source karirhub --max-pages 1 --fetch-details
 ```
 
+## Output
+
 JSON snapshots are written under `output/<source>/`.
-
-All scraper implementations (Dealls, Glints, KitaLulus, and Karirhub) only include listings whose `posted_at` falls between the scrape time and 30 days back, so older or future-dated jobs are excluded from the saved output.
-
-## Output shape
 
 Each saved record follows the shared `Job` model in `lokerbot/models.py` and includes:
 
@@ -82,65 +58,16 @@ Each saved record follows the shared `Job` model in `lokerbot/models.py` and inc
 - `posted_at`
 - `scraped_at`
 
-`description` is stored as plain text, it is only populated when the `--fetch-details` flag is included
+`description` is stored as plain text and is only populated when `--fetch-details` is included.
 
-## How the Dealls scraper works
+All scraper implementations only include listings whose `posted_at` falls between the scrape time and 30 days back, so older or future-dated jobs are excluded from the saved output.
 
-Workflow:
-1. Fetch the Dealls listing page HTML
-2. Read the embedded Next.js `__NEXT_DATA__` payload
-3. Extract the initial Dealls jobs query and available pagination data from the dehydrated page data
-4. Normalize each listing into the shared `Job` model and keep only jobs posted within the last 30 days
-5. Optionally request additional detail data for recent listings to fill missing fields, including plain-text descriptions
-6. Save the results as a JSON snapshot through `main.py`
+## Source docs
 
-## How the Glints scraper works
-
-Workflow:
-1. Launch Playwright and open the public listings page at `https://glints.com/id/lowongan-kerja`
-2. Read the client-rendered Next.js `__NEXT_DATA__` payload and resolve Apollo cache references when Glints stores the listing data there
-3. Extract public job URLs from the rendered DOM so each normalized record keeps the public Glints job link
-4. Normalize each listing into the shared `Job` model and keep only jobs posted within the last 30 days
-5. Optionally open job detail pages to fill in missing location, salary, job type, tags, and plain-text descriptions without failing the whole scrape if enrichment is unavailable
-6. Stop pagination early with a warning if Glints starts rendering login-gated or otherwise unloadable follow-up pages
-
-Current limitations:
-- The Glints scraper depends on Playwright browser binaries being installed; `firefox` is the default browser because it has been more reliable than Chromium for this public page in this environment
-- It only captures data that Glints exposes on the public listings and detail pages. If those client-rendered payloads or DOM hooks change, the scraper will need to be updated
-- `--fetch-details` is best-effort enrichment, so missing fields from a blocked or changed detail page are left as is instead of aborting the full scrape
-- `--all-pages` can still stop before the logical end of the listing set if Glints switches later pages to a login prompt or otherwise stops exposing public jobs
-
-## How the KitaLulus scraper works
-
-Workflow:
-1. Fires GraphQL API requests to `https://gql.kitalulus.com/graphql` with `vacanciesV3` operation
-2. Use persisted query hashes and Apollo CSRF protection headers to fetch job listings from the public API
-3. Parse vacancy objects from the GraphQL response and normalize it into shared `Job` model
-4. Filter jobs to only include those updated (refreshed) within the last 30 days (KitaLulus uses `updatedAt` to reflect when jobs were last bumped/refreshed, not when they were originally created)
-5. Optionally enrich jobs with additional detail data (currently a placeholder as listing data is already comprehensive)
-6. Support pagination via the GraphQL `page` parameter and `hasNextPage` indicator
-
-Current limitations:
-- The scraper depends on the KitaLulus GraphQL API structure staying stable. If the API schema, operation names, or persisted query hashes change, the scraper will need to be updated
-- `--fetch-details` is currently a placeholder since the listing API already provides comprehensive job data including descriptions, tags, location, and salary information
-- The scraper uses the default DKI Jakarta province filter
-
-## How the Karirhub scraper works
-
-Workflow:
-1. Uses Playwright @Karirhub domestic listings page at `https://karirhub.kemnaker.go.id/lowongan-dalam-negeri/lowongan`
-2. Read the rendered domestic vacancy cards from the page DOM and fetch the matching public listing API payload from the same browser session
-3. Combine the DOM card data with the API response so each normalized record keeps a stable job ID, posted timestamp, and public detail URL
-4. Normalize each listing into shared `Job` model and keep only jobs posted within the last 30 days
-5. Optionally fetch detail pages to enrich missing fields with best-effort plain-text description, location, job type, salary, and tags
-6. Continue pagination until no new jobs are found or the selected page limit is reached
-
-Current limitations:
-- if the `--all-pages` flag is included, runtime can be longer than the other scrapers because its browser-driven and may require multiple page navigations plus if the `--fetch-details` flag is included, each listing's detail page requires an additional navigation. The scraper tries to mitigate this with concurrent enrichment requests but it is still slower than the API-driven scrapers
-- The scraper depends on the current public DOM structure and listing API shape. If it changes, the parsing logic will need to be updated
-- `--fetch-details` is best-effort, so failed detail requests are logged by the scraper but listing output is still saved
-- The pagination flow is supported with Playwright, so Karirhub requires the browser to be installed
-- Because the current implementation hogs runtime, it is recommended to use `--max-pages` to minimialize runtime, especially if `--fetch-details` is included. Though the implementation may be optimized in the future to handle more pages and details within a reasonable runtime
+- [Dealls](./_docs/dealls.md)
+- [Glints](./_docs/glints.md)
+- [KitaLulus](./_docs/kitalulus.md)
+- [Karirhub](./_docs/karirhub.md)
 
 ## Shared helpers
 
