@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 import urllib.parse
 from datetime import datetime, timezone
@@ -61,7 +62,9 @@ def scrape(
                     f"Failed to fetch first page from KitaLulus API: {e}"
                 ) from e
             print(
-                f"Warning: Failed to fetch page {page_num + 1}, stopping pagination: {e}"
+                f"Warning: Failed to fetch page {page_num + 1}, stopping pagination: {e}",
+                file=sys.stderr,
+                flush=True,
             )
             break
 
@@ -70,7 +73,9 @@ def scrape(
             if elements > 0:
                 total_pages_available = (elements + 19) // 20
                 print(
-                    f"Found {elements} jobs across ~{total_pages_available} pages on KitaLulus"
+                    f"Found {elements} jobs across ~{total_pages_available} pages on KitaLulus",
+                    file=sys.stderr,
+                    flush=True,
                 )
 
         page_jobs = _parse_and_filter_jobs(
@@ -84,7 +89,11 @@ def scrape(
             progress(f"page {page_num + 1}/{total_text} • {len(page_jobs)} jobs")
 
         if not page_jobs:
-            print(f"No recent jobs found on page {page_num + 1}, stopping pagination")
+            print(
+                f"No recent jobs found on page {page_num + 1}, stopping pagination",
+                file=sys.stderr,
+                flush=True,
+            )
             break
 
         if fetch_details:
@@ -95,14 +104,20 @@ def scrape(
                         time.sleep(delay)
                 except Exception as e:
                     print(
-                        f"Warning: Failed to enrich job {job.job_id} ({job.title}): {e}"
+                        f"Warning: Failed to enrich job {job.job_id} ({job.title}): {e}",
+                        file=sys.stderr,
+                        flush=True,
                     )
 
         all_jobs.extend(page_jobs)
 
         has_next = response_data.get("hasNextPage", False)
         if not has_next:
-            print(f"Reached last page at page {page_num + 1}")
+            print(
+                f"Reached last page at page {page_num + 1}",
+                file=sys.stderr,
+                flush=True,
+            )
             break
 
         page_num += 1

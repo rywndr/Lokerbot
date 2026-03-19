@@ -36,16 +36,18 @@ def _format_progress_suffix(message: str) -> str:
 def _animate_loader(stream, source: str, stop_event: threading.Event, start: float, reporter: _ProgressReporter) -> None:
     if stream.isatty():
         frame_index = 0
+        prev_line_length = 0
         while not stop_event.wait(0.12):
             elapsed = time.perf_counter() - start
             frame = _SPINNER_FRAMES[frame_index % len(_SPINNER_FRAMES)]
             message = reporter.snapshot()
-            print(
-                f"\r[{source}] {frame} scraping... {elapsed:.1f}s elapsed{_format_progress_suffix(message)}",
-                end="",
-                file=stream,
-                flush=True,
-            )
+            line = f"[{source}] {frame} scraping... {elapsed:.1f}s elapsed{_format_progress_suffix(message)}"
+
+            if prev_line_length > 0:
+                print("\r" + " " * prev_line_length, end="", file=stream, flush=True)
+
+            print(f"\r{line}", end="", file=stream, flush=True)
+            prev_line_length = len(line)
             frame_index += 1
         return
 

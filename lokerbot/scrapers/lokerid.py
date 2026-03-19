@@ -120,8 +120,15 @@ def _scrape_with_context(
                 last_page = _extract_last_page(page_meta)
 
             if progress is not None:
-                total_text = last_page if last_page is not None else "?"
-                progress(f"page {page_number}/{total_text} • {len(page_jobs)} jobs")
+                if max_pages is not None and last_page is not None:
+                    total_text = min(max_pages, last_page)
+                elif max_pages is not None:
+                    total_text = max_pages
+                elif last_page is not None:
+                    total_text = last_page
+                else:
+                    total_text = "?"
+                progress(f"page {page_number}/{total_text} • {len(jobs)} jobs")
 
             for job in page_jobs:
                 if not _is_recent_job_post(job.posted_at, scraped_at_dt):
