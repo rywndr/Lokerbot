@@ -3,12 +3,12 @@ from __future__ import annotations
 import re
 import time
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
 
 import requests
 from bs4 import BeautifulSoup
-from playwright.sync_api import Page, Playwright, sync_playwright
 
 from lokerbot.http_client import build_session
 from lokerbot.models import Job, utc_now_iso
@@ -22,36 +22,40 @@ from lokerbot.utils import (
 
 KARIRHUB_LISTING_URL = "https://karirhub.kemnaker.go.id/lowongan-dalam-negeri/lowongan"
 KARIRHUB_LISTING_API_URL = "https://api.kemnaker.go.id/karirhub/catalogue/v1/industrial-vacancies"
-DEFAULT_BROWSER_NAME = "chromium"
-PAGE_TIMEOUT_MS = 120_000
 LISTING_PAGE_SIZE = 18
 
 
-def fetch_listing_page(page_number: int = 1, browser_name: str = DEFAULT_BROWSER_NAME) -> str:
+def fetch_listing_page(
+    page_number: int = 1,
+    session: requests.Session | None = None,
+) -> dict[str, Any]:
     if page_number < 1:
         raise ValueError("page_number must be at least 1")
 
-    with sync_playwright() as playwright:
-        browser = _launch_browser(playwright, browser_name)
-        try:
-            context = browser.new_context(locale="id-ID", viewport={"width": 1280, "height": 720})
-            try:
-                page = context.new_page()
-                _load_listing_page(page, page_number)
-                return page.content()
-            finally:
-                context.close()
-        finally:
-            browser.close()
+    owns_session = session is None
+    session = session or build_session()
+    try:
+        return _fetch_listing_page_data(session, page_number)
+    finally:
+        if owns_session:
+            session.close()
 
 
-def parse_jobs(html: str, payload: dict[str, Any], scraped_at: str | None = None) -> list[Job]:
+def parse_jobs(
+    html_or_payload: str | dict[str, Any],
+    payload: dict[str, Any] | None = None,
+    scraped_at: str | None = None,
+) -> list[Job]:
+    listing_payload = payload if payload is not None else html_or_payload
+    if not isinstance(listing_payload, dict):
+        raise ValueError("Karirhub parse_jobs requires a payload dictionary")
+
     timestamp = scraped_at or utc_now_iso()
     scraped_at_dt = _parse_iso_datetime(timestamp)
     if scraped_at_dt is None:
         raise ValueError("scraped_at must be a valid ISO 8601 timestamp")
 
-    return _parse_listing_jobs(html, payload, scraped_at=timestamp, scraped_at_dt=scraped_at_dt)
+    return _parse_listing_jobs(listing_payload, scraped_at=timestamp, scraped_at_dt=scraped_at_dt)
 
 
 def scrape(
@@ -59,7 +63,6 @@ def scrape(
     fetch_details: bool = False,
     delay: float = 0.0,
     session: requests.Session | None = None,
-    browser_name: str = DEFAULT_BROWSER_NAME,
     progress: Any | None = None,
 ) -> list[Job]:
     if max_pages is not None and max_pages < 1:
@@ -76,71 +79,56 @@ def scrape(
     seen_job_ids: set[str] = set()
     page_number = 1
 
-    with sync_playwright() as playwright:
-        browser = _launch_browser(playwright, browser_name)
-        try:
-            context = browser.new_context(locale="id-ID", viewport={"width": 1280, "height": 720})
+    try:
+        while True:
+            if progress is not None:
+                progress(f"loading page {page_number}")
+
             try:
-                page = context.new_page()
-                if progress is not None:
-                    progress(f"loading page {page_number}")
-                _load_listing_page(page, page_number)
-
-                while True:
-                    html = page.content()
-                    payload = _fetch_listing_page_data(page, page_number)
-                    page_jobs = _parse_listing_jobs(
-                        html,
-                        payload,
-                        scraped_at=scraped_at,
-                        scraped_at_dt=scraped_at_dt,
+                payload = fetch_listing_page(page_number=page_number, session=session)
+            except requests.HTTPError as exc:
+                status_code = exc.response.status_code if exc.response is not None else None
+                if page_number > 1 and status_code == 400:
+                    warnings.warn(
+                        f"Karirhub listing API rejected page {page_number}; stopping pagination at page {page_number - 1}.",
+                        RuntimeWarning,
                     )
+                    break
+                raise
 
-                    new_jobs: list[Job] = []
-                    for job in page_jobs:
-                        if job.job_id in seen_job_ids:
-                            continue
-                        seen_job_ids.add(job.job_id)
-                        new_jobs.append(job)
+            page_jobs = _parse_listing_jobs(
+                payload,
+                scraped_at=scraped_at,
+                scraped_at_dt=scraped_at_dt,
+            )
 
-                    if not new_jobs:
-                        break
+            new_jobs: list[Job] = []
+            for job in page_jobs:
+                if job.job_id in seen_job_ids:
+                    continue
+                seen_job_ids.add(job.job_id)
+                new_jobs.append(job)
 
-                    if fetch_details:
-                        for job in new_jobs:
-                            try:
-                                _enrich_job_from_detail(session, job)
-                            except Exception as exc:
-                                warnings.warn(
-                                    f"Failed to enrich Karirhub job {job.job_id} ({job.title}): {exc}",
-                                    RuntimeWarning,
-                                )
-                            if delay > 0:
-                                time.sleep(delay)
+            if not new_jobs:
+                break
 
-                    all_jobs.extend(new_jobs)
+            if fetch_details:
+                _enrich_jobs_from_detail(session, new_jobs, delay=delay)
 
-                    if progress is not None:
-                        progress(f"page {page_number} • {len(new_jobs)} jobs")
+            all_jobs.extend(new_jobs)
 
-                    if max_pages is not None and page_number >= max_pages:
-                        break
+            if progress is not None:
+                progress(f"page {page_number} • {len(new_jobs)} jobs")
 
-                    if not _click_next_listing_page(page):
-                        break
+            if max_pages is not None and page_number >= max_pages:
+                break
 
-                    page_number += 1
-                    if progress is not None:
-                        progress(f"loading page {page_number}")
-                    if delay > 0:
-                        time.sleep(delay)
-            finally:
-                context.close()
-        finally:
-            browser.close()
-
-    if owns_session:
-        session.close()
+            page_number += 1
+            if delay > 0:
+                time.sleep(delay)
+    finally:
+        if owns_session:
+            session.close()
 
     if progress is not None:
         progress(f"done • {len(all_jobs)} jobs")
@@ -148,71 +136,60 @@ def scrape(
     return all_jobs
 
 
-def _launch_browser(playwright: Playwright, browser_name: str):
-    if browser_name not in {"chromium", "firefox", "webkit"}:
-        raise ValueError("browser_name must be chromium, firefox, or webkit")
-    return getattr(playwright, browser_name).launch(headless=True)
+def _enrich_jobs_from_detail(session: requests.Session, jobs: list[Job], *, delay: float) -> None:
+    jobs_to_enrich = [job for job in jobs if _job_needs_detail_enrichment(job)]
+    if not jobs_to_enrich:
+        return
+
+    with ThreadPoolExecutor(max_workers=min(4, len(jobs_to_enrich))) as executor:
+        futures = [executor.submit(_enrich_job_with_delay, session, job, delay) for job in jobs_to_enrich]
+        for job, future in zip(jobs_to_enrich, futures):
+            try:
+                future.result()
+            except Exception as exc:
+                warnings.warn(
+                    f"Failed to enrich Karirhub job {job.job_id} ({job.title}): {exc}",
+                    RuntimeWarning,
+                )
 
 
-def _load_listing_page(page: Page, page_number: int) -> None:
-    if page_number < 1:
-        raise ValueError("page_number must be at least 1")
-
-    page.goto(KARIRHUB_LISTING_URL, wait_until="networkidle", timeout=PAGE_TIMEOUT_MS)
-    for _ in range(1, page_number):
-        if not _click_next_listing_page(page):
-            break
+def _enrich_job_with_delay(session: requests.Session, job: Job, delay: float) -> None:
+    try:
+        _enrich_job_from_detail(session, job)
+    finally:
+        if delay > 0:
+            time.sleep(delay)
 
 
-def _click_next_listing_page(page: Page) -> bool:
-    pagination_buttons = page.locator("sisnaker-element-common-pagination-button-web ion-button")
-    if pagination_buttons.count() == 0:
-        return False
+def _job_needs_detail_enrichment(job: Job) -> bool:
+    return job.location is None or job.job_type is None or job.salary_range is None or not job.tags or job.description is None
 
-    next_button = pagination_buttons.last
-    if next_button.get_attribute("disabled") is not None or next_button.get_attribute("aria-disabled") == "true":
-        return False
 
-    previous_url = page.url
-    next_button.locator("button").click()
-    page.wait_for_function(
-        "oldUrl => window.location.href !== oldUrl",
-        arg=previous_url,
-        timeout=PAGE_TIMEOUT_MS,
+def _fetch_listing_page_data(session: requests.Session, page_number: int) -> dict[str, Any]:
+    response = session.get(
+        KARIRHUB_LISTING_API_URL,
+        params={"page": page_number, "limit": LISTING_PAGE_SIZE},
+        timeout=30,
     )
-    return True
+    response.raise_for_status()
 
-
-def _fetch_listing_page_data(page: Page, page_number: int) -> dict[str, Any]:
-    api_url = f"{KARIRHUB_LISTING_API_URL}?page={page_number}&limit={LISTING_PAGE_SIZE}"
-    payload = page.evaluate(
-        """async (url) => {
-            const response = await fetch(url, { headers: { accept: 'application/json' } });
-            if (!response.ok) {
-                throw new Error(`Karirhub listing API returned ${response.status}`);
-            }
-            return await response.json();
-        }""",
-        api_url,
-    )
+    payload = response.json()
     if not isinstance(payload, dict):
         raise ValueError("Karirhub listing API did not return a JSON object")
     return payload
 
 
 def _parse_listing_jobs(
-    html: str,
     payload: dict[str, Any],
     *,
     scraped_at: str,
     scraped_at_dt: datetime,
 ) -> list[Job]:
-    cards = _extract_listing_cards(html)
     api_items = _extract_listing_items(payload)
     jobs: list[Job] = []
 
-    for card, item in zip(cards, api_items):
-        job = _parse_listing_card(card, item, scraped_at=scraped_at)
+    for item in api_items:
+        job = _parse_listing_item(item, scraped_at=scraped_at)
         if job is None:
             continue
         if not _is_recent_job_post(job.posted_at, scraped_at_dt):
@@ -220,11 +197,6 @@ def _parse_listing_jobs(
         jobs.append(job)
 
     return jobs
-
-
-def _extract_listing_cards(html: str) -> list[Any]:
-    soup = BeautifulSoup(html, "html.parser")
-    return list(soup.select("sisnaker-element-karirhub-domestic-vacancy-card-web"))
 
 
 def _extract_listing_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -239,14 +211,10 @@ def _extract_listing_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return listing_items
 
 
-def _parse_listing_card(card: Any, item: dict[str, Any], *, scraped_at: str) -> Job | None:
+def _parse_listing_item(item: dict[str, Any], *, scraped_at: str) -> Job | None:
     job_id = _clean_string(item.get("id") or item.get("_id") or item.get("job_id"))
-    title = _clean_string(_extract_card_text(card, "div.header-section > div:nth-of-type(1)")) or _clean_string(
-        item.get("title")
-    )
-    company = _clean_string(_extract_card_text(card, "div.header-section > div:nth-of-type(2)")) or _clean_string(
-        item.get("company_name")
-    )
+    title = _clean_string(item.get("title"))
+    company = _clean_string(item.get("company_name"))
     if not job_id or not title or not company:
         return None
 
@@ -254,12 +222,11 @@ def _parse_listing_card(card: Any, item: dict[str, Any], *, scraped_at: str) -> 
     if posted_at is None:
         return None
 
-    location = _clean_string(_extract_card_text(card, "div.header-section > div:nth-of-type(3)")) or _clean_string(
-        item.get("city_name")
-    )
-    job_type = _clean_string(item.get("job_type_name"))
-    salary_range = _format_salary_range(card, item)
+    location = _clean_string(item.get("city_name") or item.get("location"))
+    job_type = _clean_string(item.get("job_type_name") or item.get("job_type"))
+    salary_range = _format_salary_range(None, item)
     tags = _collect_tags(item)
+    description = _clean_string(item.get("description") or item.get("job_description") or item.get("description_text"))
     url = _build_detail_url(title, job_id)
 
     return Job(
@@ -273,10 +240,13 @@ def _parse_listing_card(card: Any, item: dict[str, Any], *, scraped_at: str) -> 
         tags=tags,
         posted_at=posted_at,
         scraped_at=scraped_at,
+        description=description,
     )
 
 
 def _extract_card_text(card: Any, selector: str) -> str | None:
+    if card is None:
+        return None
     node = card.select_one(selector)
     if node is None:
         return None
@@ -292,10 +262,11 @@ def _format_posted_at(value: Any) -> str | None:
     return None
 
 
-def _format_salary_range(card: Any, item: dict[str, Any]) -> str | None:
-    card_salary = _extract_card_text(card, "sisnaker-element-karirhub-vacancy-price")
-    if card_salary:
-        return None if card_salary == "Dirahasiakan" else card_salary
+def _format_salary_range(card: Any | None, item: dict[str, Any]) -> str | None:
+    if card is not None:
+        card_salary = _extract_card_text(card, "sisnaker-element-karirhub-vacancy-price")
+        if card_salary:
+            return None if card_salary == "Dirahasiakan" else card_salary
 
     if not item.get("show_salary"):
         return None

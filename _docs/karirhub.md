@@ -1,24 +1,22 @@
 # Karirhub scraper
 
 ## Overview
-Karirhub is a browser-driven scraper that combines rendered DOM cards with the public listing API to build normalized `Job` records
+Karirhub is a requests-driven scraper that paginates the public listing API directly and builds normalized `Job` records from the API payload
 
 ## Workflow
-1. Launch Playwright and open the public Karirhub domestic listings page
-2. Read the rendered vacancy cards from the DOM
-3. Fetch the matching public listing API payload from the same browser session
-4. Combine the DOM and API data so each record keeps a stable job ID, posted timestamp, and detail URL
-5. Normalize each listing and keep only jobs posted within the last 30 days
-6. Optionally fetch detail pages to enrich missing fields with best-effort plain-text description, location, job type, salary, and tags
-7. Paginate until no new jobs are found or the selected page limit is reached
+1. Create a reusable `requests.Session`
+2. Fetch each Karirhub listing page from `KARIRHUB_LISTING_API_URL` with `page` and `limit=18`
+3. Parse the API payload into normalized jobs, keeping the stable job ID, posted timestamp, detail URL, location, salary, and tags
+4. Keep only jobs posted within the last 30 days
+5. Deduplicate repeated `job_id` values across pages and stop when a page returns no new jobs or the requested page limit is reached
+6. Optionally fetch detail pages only for jobs that are still missing fields after listing parsing, enriching them with best-effort plain-text description, location, job type, salary, and tags
+7. Sleep between page requests and detail requests when `--delay` is enabled
 
 ## Notes
-- `--all-pages` can take noticeably longer than the other scrapers because Karirhub requires browser-driven navigation and optional detail enrichment
-- The scraper depends on the current public DOM structure and listing API shape
-- `--fetch-details` is best-effort; failed detail requests do not abort the scrape
-- Karirhub requires the Playwright browser to be installed
-- Current implementation hogs runtime and memory because it keeps all rendered DOM data in memory instead of using a hybrid browser-HTTP approach like the other scrapers, but this can be optimized in the future if needed
-
+- `--all-pages` is now much cheaper than the previous browser-driven implementation because listing pagination is direct HTTP instead of Playwright navigation
+- The scraper still depends on the current public API payload shape
+- `--fetch-details` is best-effort and now uses a small worker pool, failed detail requests do not abort the scrape
+- The listing path no longer requires Playwright startup or rendered DOM cards
 
 ## Relevant code
 - `lokerbot/scrapers/karirhub.py`
