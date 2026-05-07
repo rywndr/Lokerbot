@@ -17,6 +17,7 @@ Karirhub is a requests-driven scraper that paginates the public listing API dire
 - The scraper still depends on the current public API payload shape
 - `--fetch-details` is best-effort and now uses a small worker pool, failed detail requests do not abort the scrape
 - The listing path no longer requires Playwright startup or rendered DOM cards
+- Detail URLs are slugified from the job title; `/` characters are replaced with `-` and runs of `-` are collapsed so titles like "Chef/Cook" no longer leak the slash into the URL path and 404 the detail fetch
 
 ## Relevant code
 - `lokerbot/scrapers/karirhub.py`

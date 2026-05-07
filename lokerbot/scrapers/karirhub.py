@@ -3,14 +3,14 @@ from __future__ import annotations
 import re
 import time
 import warnings
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any
 
 import requests
 from bs4 import BeautifulSoup
 
-from lokerbot.http_client import build_session
+from lokerbot.http_client import SessionPool, build_session
 from lokerbot.models import Job, utc_now_iso
 from lokerbot.utils import (
     clean_string as _clean_string,
@@ -23,6 +23,7 @@ from lokerbot.utils import (
 KARIRHUB_LISTING_URL = "https://karirhub.kemnaker.go.id/lowongan-dalam-negeri/lowongan"
 KARIRHUB_LISTING_API_URL = "https://api.kemnaker.go.id/karirhub/catalogue/v1/industrial-vacancies"
 LISTING_PAGE_SIZE = 18
+DETAIL_WORKER_COUNT = 10  # Balanced for performance vs rate limiting
 
 
 def fetch_listing_page(
@@ -78,11 +79,35 @@ def scrape(
     all_jobs: list[Job] = []
     seen_job_ids: set[str] = set()
     page_number = 1
+    last_page: int | None = None
+    detail_executor: ThreadPoolExecutor | None = None
+    session_pool: SessionPool | None = None
+    pending_detail_futures: list[tuple[Job, Any]] = []
+    batch_size = 5  # Process details in batches to avoid accumulating too many pending futures
+
+    # If a session is provided externally, use it directly for detail fetching (for testing/mocking)
+    # Otherwise, create a session pool for better performance
+    use_session_pool = owns_session
 
     try:
+        if fetch_details:
+            detail_executor = ThreadPoolExecutor(max_workers=DETAIL_WORKER_COUNT)
+            if use_session_pool:
+                session_pool = SessionPool(size=DETAIL_WORKER_COUNT)
+
         while True:
+            if last_page is not None:
+                progress_last_page = str(min(last_page, max_pages)) if max_pages is not None else str(last_page)
+            else:
+                progress_last_page = None
+
             if progress is not None:
-                progress(f"loading page {page_number}")
+                loading_page_text = (
+                    f"loading page {page_number}/{progress_last_page}"
+                    if progress_last_page is not None
+                    else f"loading page {page_number}"
+                )
+                progress(loading_page_text)
 
             try:
                 payload = fetch_listing_page(page_number=page_number, session=session)
@@ -95,6 +120,10 @@ def scrape(
                     )
                     break
                 raise
+
+            payload_last_page = _extract_last_page(payload)
+            if payload_last_page is not None:
+                last_page = payload_last_page
 
             page_jobs = _parse_listing_jobs(
                 payload,
@@ -112,13 +141,27 @@ def scrape(
             if not new_jobs:
                 break
 
-            if fetch_details:
-                _enrich_jobs_from_detail(session, new_jobs, delay=delay)
+            if fetch_details and detail_executor is not None:
+                if session_pool is not None:
+                    pending_detail_futures.extend(
+                        _enrich_jobs_from_detail(detail_executor, session_pool, new_jobs, delay=delay)
+                    )
+                else:
+                    # Use provided session directly (for testing)
+                    pending_detail_futures.extend(
+                        _enrich_jobs_from_detail_with_session(detail_executor, session, new_jobs, delay=delay)
+                    )
+
+                # Drain batch if we've accumulated enough futures
+                if len(pending_detail_futures) >= batch_size * LISTING_PAGE_SIZE:
+                    _drain_pending_detail_enrichment(pending_detail_futures[:batch_size * LISTING_PAGE_SIZE])
+                    pending_detail_futures = pending_detail_futures[batch_size * LISTING_PAGE_SIZE:]
 
             all_jobs.extend(new_jobs)
 
             if progress is not None:
-                progress(f"page {page_number} • {len(new_jobs)} jobs")
+                page_text = f"{page_number}/{progress_last_page}" if progress_last_page is not None else str(page_number)
+                progress(f"page {page_text} • {len(all_jobs)} jobs")
 
             if max_pages is not None and page_number >= max_pages:
                 break
@@ -127,8 +170,15 @@ def scrape(
             if delay > 0:
                 time.sleep(delay)
     finally:
-        if owns_session:
-            session.close()
+        try:
+            _drain_pending_detail_enrichment(pending_detail_futures)
+        finally:
+            if session_pool is not None:
+                session_pool.close_all()
+            if detail_executor is not None:
+                detail_executor.shutdown(wait=True)
+            if owns_session:
+                session.close()
 
     if progress is not None:
         progress(f"done • {len(all_jobs)} jobs")
@@ -136,24 +186,68 @@ def scrape(
     return all_jobs
 
 
-def _enrich_jobs_from_detail(session: requests.Session, jobs: list[Job], *, delay: float) -> None:
+def _enrich_jobs_from_detail(
+    executor: ThreadPoolExecutor,
+    session_pool: SessionPool,
+    jobs: list[Job],
+    *,
+    delay: float,
+) -> list[tuple[Job, Any]]:
     jobs_to_enrich = [job for job in jobs if _job_needs_detail_enrichment(job)]
     if not jobs_to_enrich:
+        return []
+
+    return [
+        (job, executor.submit(_enrich_job_with_delay, session_pool, job, delay))
+        for job in jobs_to_enrich
+    ]
+
+
+def _enrich_jobs_from_detail_with_session(
+    executor: ThreadPoolExecutor,
+    session: requests.Session,
+    jobs: list[Job],
+    *,
+    delay: float,
+) -> list[tuple[Job, Any]]:
+    """Enrich jobs using a single shared session (for testing/mocking)."""
+    jobs_to_enrich = [job for job in jobs if _job_needs_detail_enrichment(job)]
+    if not jobs_to_enrich:
+        return []
+
+    return [
+        (job, executor.submit(_enrich_job_with_delay_using_session, session, job, delay))
+        for job in jobs_to_enrich
+    ]
+
+
+def _drain_pending_detail_enrichment(pending_detail_futures: list[tuple[Job, Any]]) -> None:
+    if not pending_detail_futures:
         return
 
-    with ThreadPoolExecutor(max_workers=min(4, len(jobs_to_enrich))) as executor:
-        futures = [executor.submit(_enrich_job_with_delay, session, job, delay) for job in jobs_to_enrich]
-        for job, future in zip(jobs_to_enrich, futures):
-            try:
-                future.result()
-            except Exception as exc:
-                warnings.warn(
-                    f"Failed to enrich Karirhub job {job.job_id} ({job.title}): {exc}",
-                    RuntimeWarning,
-                )
+    future_to_job = {future: job for job, future in pending_detail_futures}
+    for future in as_completed(future_to_job):
+        job = future_to_job[future]
+        try:
+            future.result()
+        except Exception as exc:
+            warnings.warn(
+                f"Failed to enrich Karirhub job {job.job_id} ({job.title}): {exc}",
+                RuntimeWarning,
+            )
 
 
-def _enrich_job_with_delay(session: requests.Session, job: Job, delay: float) -> None:
+def _enrich_job_with_delay(session_pool: SessionPool, job: Job, delay: float) -> None:
+    session = session_pool.acquire()
+    try:
+        _enrich_job_from_detail(session, job)
+    finally:
+        if delay > 0:
+            time.sleep(delay)
+
+
+def _enrich_job_with_delay_using_session(session: requests.Session, job: Job, delay: float) -> None:
+    """Enrich job using a single shared session (for testing/mocking)."""
     try:
         _enrich_job_from_detail(session, job)
     finally:
@@ -197,6 +291,17 @@ def _parse_listing_jobs(
         jobs.append(job)
 
     return jobs
+
+
+def _extract_last_page(payload: dict[str, Any]) -> int | None:
+    meta = payload.get("meta")
+    if not isinstance(meta, dict):
+        return None
+
+    last_page = meta.get("last_page")
+    if isinstance(last_page, int) and last_page > 0:
+        return last_page
+    return None
 
 
 def _extract_listing_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -303,14 +408,31 @@ def _collect_tags(item: dict[str, Any]) -> list[str]:
 
 def _build_detail_url(title: str, job_id: str) -> str:
     slug = re.sub(r"\s+", "-", title.strip().lower())
+    slug = slug.replace("/", "-")
+    slug = re.sub(r"-{2,}", "-", slug).strip("-")
     return f"{KARIRHUB_LISTING_URL}/{slug}-{job_id}"
 
 
 def _enrich_job_from_detail(session: requests.Session, job: Job) -> None:
-    response = session.get(job.url, timeout=30)
-    response.raise_for_status()
-    detail_html = response.text
-    detail = _parse_detail_page(detail_html)
+    try:
+        response = session.get(job.url, timeout=30)
+        response.raise_for_status()
+        detail_html = response.text
+    except Exception as exc:
+        warnings.warn(
+            f"Failed to fetch detail page for job {job.job_id} ({job.title}): {exc}",
+            RuntimeWarning,
+        )
+        return
+
+    try:
+        detail = _parse_detail_page(detail_html)
+    except Exception as exc:
+        warnings.warn(
+            f"Failed to parse detail page for job {job.job_id} ({job.title}): {exc}",
+            RuntimeWarning,
+        )
+        return
 
     detail_location = _clean_string(detail.get("location"))
     if _should_replace_location(job.location, detail_location):
@@ -341,7 +463,16 @@ def _parse_detail_page(html: str) -> dict[str, Any]:
     soup = BeautifulSoup(html, "html.parser")
     lines = _extract_text_lines(soup)
     if not lines:
-        raise ValueError("Karirhub detail page did not contain any text")
+        warnings.warn("Karirhub detail page did not contain any text", RuntimeWarning)
+        return {
+            "title": None,
+            "location": None,
+            "posted_line": None,
+            "salary_range": None,
+            "job_type": None,
+            "tags": [],
+            "description": None,
+        }
 
     title = _find_first_line_after(lines, "Lowongan dalam negeri")
     location = _find_line_after_title(lines, title)
@@ -462,15 +593,40 @@ def _build_description_from_lines(lines: list[str]) -> str | None:
 
 
 def _should_replace_location(current: str | None, candidate: str | None) -> bool:
+    """Determine if candidate location should replace current location.
+
+    Prioritizes more specific locations (e.g., "Jakarta Selatan, DKI Jakarta" over "Indonesia").
+    Uses length, comma count, and specificity heuristics.
+    """
     if candidate is None:
         return False
     if current is None:
         return True
     if current == candidate:
         return False
+
+    # Always replace generic "Indonesia" with anything more specific
     if current.lower() == "indonesia":
         return True
-    return candidate.count(",") > current.count(",")
+    if candidate.lower() == "indonesia":
+        return False
+
+    # Count commas as a proxy for specificity (e.g., "City, Province" is more specific than "Province")
+    current_commas = current.count(",")
+    candidate_commas = candidate.count(",")
+
+    if candidate_commas > current_commas:
+        return True
+    if candidate_commas < current_commas:
+        return False
+
+    # If comma count is equal, prefer longer string (more detail)
+    # But only if the difference is significant (>10 chars)
+    if len(candidate) > len(current) + 10:
+        return True
+
+    # Default: keep current
+    return False
 
 
 __all__ = ["fetch_listing_page", "parse_jobs", "scrape"]

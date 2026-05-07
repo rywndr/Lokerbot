@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, call
@@ -11,7 +13,9 @@ from bs4 import BeautifulSoup
 from lokerbot.models import Job
 from lokerbot.scrapers.karirhub import (
     KARIRHUB_LISTING_API_URL,
+    KARIRHUB_LISTING_URL,
     LISTING_PAGE_SIZE,
+    _build_detail_url,
     _enrich_job_from_detail,
     _format_salary_range,
     _parse_detail_page,
@@ -205,6 +209,23 @@ class KarirhubParserTests(unittest.TestCase):
 
         self.assertIsNone(_format_salary_range(card, {"show_salary": False}))
 
+    def test_build_detail_url_strips_slashes_from_title(self) -> None:
+        url = _build_detail_url("Chef/Cook, Kitchen Staff", "abc-123")
+
+        self.assertEqual(
+            url,
+            f"{KARIRHUB_LISTING_URL}/chef-cook,-kitchen-staff-abc-123",
+        )
+        self.assertNotIn("/chef/", url[len(KARIRHUB_LISTING_URL):])
+
+    def test_build_detail_url_collapses_repeated_hyphens(self) -> None:
+        url = _build_detail_url("Waiter / Waitress", "xyz")
+
+        self.assertEqual(
+            url,
+            f"{KARIRHUB_LISTING_URL}/waiter-waitress-xyz",
+        )
+
     def test_enrich_job_from_detail_replaces_missing_fields(self) -> None:
         session = Mock()
         response = Mock()
@@ -290,6 +311,79 @@ class KarirhubScrapeTests(unittest.TestCase):
         )
         self.assertCountEqual(
             session.get.call_args_list[1:],
+            [
+                call(jobs[0].url, timeout=30),
+                call(jobs[1].url, timeout=30),
+            ],
+        )
+
+    def test_scrape_keeps_fetching_next_pages_while_detail_is_blocked(self) -> None:
+        page1_detail_started = threading.Event()
+        page2_listing_requested = threading.Event()
+        release_page1_detail = threading.Event()
+        detail_call_args: list[call] = []
+        detail_call_lock = threading.Lock()
+
+        page1_items = [
+            build_item(
+                "job-1",
+                "Backend Engineer",
+                "PT Example Tech",
+                "Jakarta Selatan",
+                1773648000,
+                skills=["Python", "SQL"],
+            )
+        ]
+        page2_items = [
+            build_item(
+                "job-2",
+                "Frontend Engineer",
+                "PT Example Studio",
+                "Bandung",
+                1773644400,
+                show_salary=False,
+                min_salary_amount=None,
+                max_salary_amount=None,
+                skills=[],
+                job_function_name="Web Development",
+                job_type_name="Contract",
+            )
+        ]
+
+        session = Mock()
+
+        def get_side_effect(url: str, *args: Any, **kwargs: Any):
+            params = kwargs.get("params")
+            if url == KARIRHUB_LISTING_API_URL and params == {"page": 1, "limit": LISTING_PAGE_SIZE}:
+                return _response_with_json({"data": page1_items})
+            if url == KARIRHUB_LISTING_API_URL and params == {"page": 2, "limit": LISTING_PAGE_SIZE}:
+                page2_listing_requested.set()
+                return _response_with_json({"data": page2_items})
+            if url == "https://karirhub.kemnaker.go.id/lowongan-dalam-negeri/lowongan/backend-engineer-job-1":
+                with detail_call_lock:
+                    detail_call_args.append(call(url, timeout=30))
+                page1_detail_started.set()
+                if not release_page1_detail.wait(timeout=5):
+                    raise AssertionError("page 1 detail request was not released")
+                return _response_with_text(self.detail_html)
+            if url == "https://karirhub.kemnaker.go.id/lowongan-dalam-negeri/lowongan/frontend-engineer-job-2":
+                with detail_call_lock:
+                    detail_call_args.append(call(url, timeout=30))
+                return _response_with_text(self.detail_html)
+            raise AssertionError(f"Unexpected request: {url!r}")
+
+        session.get.side_effect = get_side_effect
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(scrape, max_pages=2, fetch_details=True, delay=0.0, session=session)
+            self.assertTrue(page1_detail_started.wait(timeout=5), "page 1 detail request never started")
+            self.assertTrue(page2_listing_requested.wait(timeout=5), "page 2 listing request did not happen before detail release")
+            release_page1_detail.set()
+            jobs = future.result(timeout=5)
+
+        self.assertEqual([job.job_id for job in jobs], ["job-1", "job-2"])
+        self.assertCountEqual(
+            detail_call_args,
             [
                 call(jobs[0].url, timeout=30),
                 call(jobs[1].url, timeout=30),
