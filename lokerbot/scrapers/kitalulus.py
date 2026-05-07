@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import copy
 import json
+import re
 import sys
 import time
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import requests
@@ -19,12 +21,22 @@ from lokerbot.utils import (
     normalize_description_text as _normalize_description_text,
 )
 
-_GQL_ENDPOINT = "https://gql.kitalulus.com/graphql"
-_OPERATION_NAME = "vacanciesV3"
-_PERSISTED_QUERY_HASH = "4439d81c984afb32d9e1bae2196a3383ede6241f4742bc8c289e28340025dbf9"
-
-_DEFAULT_LOCATION = "DKI JAKARTA"
-_DEFAULT_AREA_TYPE = "PROVINCE"
+_LISTING_PAGE_URL = "https://www.kitalulus.com/lowongan"
+_GQL_HOST = "gql.kitalulus.com"
+_BOOTSTRAP_TIMEOUT_MS = 45_000
+_LOAD_MORE_BUTTON_TEXT = "Lebih Banyak"
+_DEFAULT_PAGE_LIMIT = 30
+_VACANCIES_PAYLOAD_KEYS = ("vacanciesV4", "vacanciesV3")
+_RELATIVE_TIME_PATTERN = re.compile(r"(\d+)\s+(menit|jam|hari|minggu|bulan|tahun)")
+_DROP_REQUEST_HEADERS = frozenset(
+    {
+        "content-length",
+        "host",
+        "connection",
+        "accept-encoding",
+        "transfer-encoding",
+    }
+)
 
 
 def scrape(
@@ -37,41 +49,49 @@ def scrape(
     if session is None:
         session = _build_session()
 
+    if progress is not None:
+        progress("bootstrapping browser")
+    request_template = _bootstrap_request_template()
+
     scraped_at_dt = datetime.now(tz=timezone.utc)
     scraped_at = scraped_at_dt.isoformat().replace("+00:00", "Z")
     all_jobs: list[Job] = []
-    page_num = 0
-    total_pages_available = None
+    seen_ids: set[str] = set()
+    page_num = 1
+    total_pages_available: int | None = None
+    per_page_count: int | None = None
 
     while True:
-        if max_pages is not None and page_num >= max_pages:
+        if max_pages is not None and page_num > max_pages:
             break
 
         if progress is not None:
-            progress(f"loading page {page_num + 1}")
+            progress(f"loading page {page_num}")
 
         try:
             response_data = _fetch_vacancies_page(
                 session=session,
+                template=request_template,
                 page=page_num,
-                limit=20,
             )
         except Exception as e:
-            if page_num == 0:
+            if page_num == 1:
                 raise ValueError(
                     f"Failed to fetch first page from KitaLulus API: {e}"
                 ) from e
             print(
-                f"Warning: Failed to fetch page {page_num + 1}, stopping pagination: {e}",
+                f"Warning: Failed to fetch page {page_num}, stopping pagination: {e}",
                 file=sys.stderr,
                 flush=True,
             )
             break
 
-        if page_num == 0:
+        list_items = response_data.get("list") or []
+        if page_num == 1:
+            per_page_count = len(list_items) or _DEFAULT_PAGE_LIMIT
             elements = response_data.get("elements", 0)
-            if elements > 0:
-                total_pages_available = (elements + 19) // 20
+            if elements > 0 and per_page_count > 0:
+                total_pages_available = (elements + per_page_count - 1) // per_page_count
                 print(
                     f"Found {elements} jobs across ~{total_pages_available} pages on KitaLulus",
                     file=sys.stderr,
@@ -79,25 +99,32 @@ def scrape(
                 )
 
         page_jobs = _parse_and_filter_jobs(
-            vacancies_list=response_data.get("list", []),
+            vacancies_list=list_items,
             scraped_at=scraped_at,
             scraped_at_dt=scraped_at_dt,
         )
 
+        new_jobs: list[Job] = []
+        for job in page_jobs:
+            if job.job_id in seen_ids:
+                continue
+            seen_ids.add(job.job_id)
+            new_jobs.append(job)
+
         if progress is not None:
             total_text = total_pages_available if total_pages_available is not None else "?"
-            progress(f"page {page_num + 1}/{total_text} • {len(page_jobs)} jobs")
+            progress(f"page {page_num}/{total_text} • {len(new_jobs)} jobs")
 
         if not page_jobs:
             print(
-                f"No recent jobs found on page {page_num + 1}, stopping pagination",
+                f"No recent jobs found on page {page_num}, stopping pagination",
                 file=sys.stderr,
                 flush=True,
             )
             break
 
         if fetch_details:
-            for job in page_jobs:
+            for job in new_jobs:
                 try:
                     _enrich_job_from_detail(session, job)
                     if delay > 0:
@@ -109,12 +136,12 @@ def scrape(
                         flush=True,
                     )
 
-        all_jobs.extend(page_jobs)
+        all_jobs.extend(new_jobs)
 
         has_next = response_data.get("hasNextPage", False)
         if not has_next:
             print(
-                f"Reached last page at page {page_num + 1}",
+                f"Reached last page at page {page_num}",
                 file=sys.stderr,
                 flush=True,
             )
@@ -129,42 +156,179 @@ def scrape(
     return all_jobs
 
 
-def _fetch_vacancies_page(
-    session: requests.Session,
-    page: int = 0,
-    limit: int = 20,
-    location: str = _DEFAULT_LOCATION,
-    area_type: str = _DEFAULT_AREA_TYPE,
-) -> dict[str, Any]:
-    variables = {
-        "keyword": "",
-        "filter": {"page": page, "limit": limit},
-        "filters": [
-            {"key": "sortBy", "value": ["isHighlighted"]},
-            {"key": "fuzzySearch", "value": ["false"]},
-        ],
-        "locations": [{"areaType": area_type, "name": location}],
-        "haveMisiSeruLimit": True,
-    }
+def _bootstrap_request_template() -> dict[str, Any]:
+    """Open the public listings page in headless Firefox, click the
+    "Lebih Banyak" pagination button, intercept the resulting Vacancies
+    GraphQL response, and return a request template that can be replayed
+    via requests.Session for subsequent pages.
+    """
+    from playwright.sync_api import sync_playwright
 
-    extensions = {
-        "persistedQuery": {"version": 1, "sha256Hash": _PERSISTED_QUERY_HASH}
-    }
+    captured: dict[str, Any] = {}
 
-    params = {
-        "operationName": _OPERATION_NAME,
-        "variables": json.dumps(variables, separators=(",", ":")),
-        "extensions": json.dumps(extensions, separators=(",", ":")),
-    }
+    with sync_playwright() as playwright:
+        browser = playwright.firefox.launch(headless=True)
+        try:
+            context = browser.new_context(
+                locale="id-ID",
+                viewport={"width": 1280, "height": 720},
+            )
+            try:
+                page = context.new_page()
 
-    url = f"{_GQL_ENDPOINT}?{urllib.parse.urlencode(params)}"
+                def _maybe_capture(response) -> None:
+                    if captured:
+                        return
+                    if _GQL_HOST not in response.url:
+                        return
+
+                    try:
+                        data = response.json()
+                    except Exception:
+                        return
+
+                    if not isinstance(data, dict) or data.get("errors"):
+                        return
+                    payload = data.get("data")
+                    if not isinstance(payload, dict):
+                        return
+                    if not any(payload.get(key) for key in _VACANCIES_PAYLOAD_KEYS):
+                        return
+
+                    request = response.request
+                    captured["method"] = request.method
+                    captured["url"] = request.url
+                    captured["headers"] = dict(request.headers)
+                    captured["post_data"] = request.post_data
+
+                page.on("response", _maybe_capture)
+
+                try:
+                    page.goto(
+                        _LISTING_PAGE_URL,
+                        wait_until="domcontentloaded",
+                        timeout=_BOOTSTRAP_TIMEOUT_MS,
+                    )
+                except Exception:
+                    pass
+
+                try:
+                    page.wait_for_load_state("networkidle", timeout=15_000)
+                except Exception:
+                    pass
+
+                button = page.get_by_role("button", name=_LOAD_MORE_BUTTON_TEXT).first
+                try:
+                    button.scroll_into_view_if_needed(timeout=10_000)
+                    button.click(timeout=10_000)
+                except Exception as exc:
+                    raise RuntimeError(
+                        "KitaLulus bootstrap failed: could not click the "
+                        f"'{_LOAD_MORE_BUTTON_TEXT}' button. The site layout may have changed."
+                    ) from exc
+
+                deadline = time.monotonic() + (_BOOTSTRAP_TIMEOUT_MS / 1000)
+                while not captured and time.monotonic() < deadline:
+                    page.wait_for_timeout(200)
+
+                if not captured:
+                    raise RuntimeError(
+                        "KitaLulus bootstrap failed: no successful Vacancies GraphQL "
+                        "response was observed within "
+                        f"{_BOOTSTRAP_TIMEOUT_MS // 1000}s. The site layout may have changed."
+                    )
+            finally:
+                context.close()
+        finally:
+            browser.close()
+
+    return _normalize_template(captured)
+
+
+def _normalize_template(captured: dict[str, Any]) -> dict[str, Any]:
+    method = (captured.get("method") or "POST").upper()
+    url = captured["url"]
+    raw_headers = captured.get("headers") or {}
+    post_data = captured.get("post_data")
 
     headers = {
-        "x-apollo-operation-name": _OPERATION_NAME,
-        "content-type": "application/json",
+        key: value
+        for key, value in raw_headers.items()
+        if key.lower() not in _DROP_REQUEST_HEADERS
     }
 
-    response = session.get(url, headers=headers, timeout=30)
+    if method == "GET":
+        parsed = urllib.parse.urlparse(url)
+        endpoint = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        params = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+        return {
+            "method": "GET",
+            "endpoint": endpoint,
+            "headers": headers,
+            "params": params,
+            "body": None,
+        }
+
+    if isinstance(post_data, str) and post_data:
+        try:
+            body: Any = json.loads(post_data)
+        except json.JSONDecodeError:
+            body = post_data
+    else:
+        body = None
+
+    return {
+        "method": "POST",
+        "endpoint": url,
+        "headers": headers,
+        "params": None,
+        "body": body,
+    }
+
+
+def _fetch_vacancies_page(
+    session: requests.Session,
+    template: dict[str, Any],
+    page: int,
+) -> dict[str, Any]:
+    method = template.get("method", "POST")
+    headers = dict(template.get("headers") or {})
+
+    if method == "GET":
+        params = copy.deepcopy(template.get("params") or {})
+        variables_raw = params.get("variables")
+        if isinstance(variables_raw, str) and variables_raw:
+            variables = json.loads(variables_raw)
+            _bump_page(variables, page)
+            params["variables"] = json.dumps(variables, separators=(",", ":"))
+        response = session.get(
+            template["endpoint"],
+            params=params,
+            headers=headers,
+            timeout=30,
+        )
+    else:
+        body = copy.deepcopy(template.get("body"))
+        if isinstance(body, dict) and isinstance(body.get("variables"), dict):
+            _bump_page(body["variables"], page)
+            payload = json.dumps(body, separators=(",", ":"))
+        elif isinstance(body, list):
+            for entry in body:
+                if isinstance(entry, dict) and isinstance(entry.get("variables"), dict):
+                    _bump_page(entry["variables"], page)
+            payload = json.dumps(body, separators=(",", ":"))
+        elif isinstance(body, str):
+            payload = body
+        else:
+            payload = json.dumps(body) if body is not None else ""
+        if "content-type" not in {key.lower() for key in headers}:
+            headers["content-type"] = "application/json"
+        response = session.post(
+            template["endpoint"],
+            data=payload,
+            headers=headers,
+            timeout=30,
+        )
 
     if response.status_code != 200:
         raise ValueError(
@@ -176,16 +340,40 @@ def _fetch_vacancies_page(
     except json.JSONDecodeError as e:
         raise ValueError(f"Invalid JSON response from KitaLulus API: {e}") from e
 
-    if "errors" in data:
-        errors = data["errors"]
-        raise ValueError(f"KitaLulus GraphQL errors: {errors}")
+    if data.get("errors"):
+        raise ValueError(f"KitaLulus GraphQL errors: {data['errors']}")
 
-    if "data" not in data or "vacanciesV3" not in data["data"]:
+    payload = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(payload, dict):
         raise ValueError(
-            f"Unexpected API response structure. Expected data.vacanciesV3, got: {list(data.keys())}"
+            f"Unexpected API response structure. Expected data object, got: {type(data).__name__}"
         )
 
-    return data["data"]["vacanciesV3"]
+    for key in _VACANCIES_PAYLOAD_KEYS:
+        if key in payload and payload[key] is not None:
+            return payload[key]
+
+    raise ValueError(
+        f"Unexpected API response structure. Expected one of {_VACANCIES_PAYLOAD_KEYS}, got: {list(payload.keys())}"
+    )
+
+
+def _bump_page(variables: dict[str, Any], page: int) -> None:
+    """Set the page index in whichever pagination key the API uses.
+
+    KitaLulus has shipped two shapes: `variables.filter.{page,limit}`
+    (legacy `vacanciesV3`) and `variables.pagination.{page,limit}` (current
+    `vacanciesV4`). We mutate every one we find so a single template can
+    page either API.
+    """
+    mutated = False
+    for key in ("pagination", "filter"):
+        slot = variables.get(key)
+        if isinstance(slot, dict):
+            slot["page"] = page
+            mutated = True
+    if not mutated:
+        variables["pagination"] = {"page": page}
 
 
 def _parse_and_filter_jobs(
@@ -216,8 +404,8 @@ def _parse_vacancy_doc(
     job_id = vacancy.get("code")
     title = vacancy.get("positionName")
     slug = vacancy.get("slug")
-    company_data = vacancy.get("company", {})
-    company_name = company_data.get("name") if company_data else None
+    company_data = vacancy.get("company") or {}
+    company_name = company_data.get("name") if isinstance(company_data, dict) else None
 
     if not job_id or not title or not slug or not company_name:
         return None
@@ -225,6 +413,10 @@ def _parse_vacancy_doc(
     url = f"https://www.kitalulus.com/lowongan/detail/{slug}"
 
     posted_at_dt = _parse_microsecond_timestamp(vacancy.get("updatedAt"))
+    if posted_at_dt is None:
+        posted_at_dt = _parse_indonesian_relative_time(
+            vacancy.get("updatedAtStr"), scraped_at_dt
+        )
     posted_at = posted_at_dt.isoformat().replace("+00:00", "Z") if posted_at_dt else None
 
     location = _format_location(vacancy)
@@ -257,12 +449,45 @@ def _parse_microsecond_timestamp(timestamp: int | None) -> datetime | None:
         return None
 
 
-def _format_location(vacancy: dict[str, Any]) -> str | None:
-    city_data = vacancy.get("city", {})
-    province_data = vacancy.get("province", {})
+def _parse_indonesian_relative_time(
+    text: str | None,
+    now: datetime,
+) -> datetime | None:
+    if not isinstance(text, str) or not text:
+        return None
+    lowered = text.lower()
+    if "baru saja" in lowered or "hari ini" in lowered:
+        return now
+    if "kemarin" in lowered:
+        return now - timedelta(days=1)
 
-    city_name = city_data.get("name") if city_data else None
-    province_name = province_data.get("name") if province_data else None
+    match = _RELATIVE_TIME_PATTERN.search(lowered)
+    if match is None:
+        return None
+
+    amount = int(match.group(1))
+    unit = match.group(2)
+    if unit == "menit":
+        return now - timedelta(minutes=amount)
+    if unit == "jam":
+        return now - timedelta(hours=amount)
+    if unit == "hari":
+        return now - timedelta(days=amount)
+    if unit == "minggu":
+        return now - timedelta(weeks=amount)
+    if unit == "bulan":
+        return now - timedelta(days=amount * 30)
+    if unit == "tahun":
+        return now - timedelta(days=amount * 365)
+    return None
+
+
+def _format_location(vacancy: dict[str, Any]) -> str | None:
+    city_data = vacancy.get("city") or {}
+    province_data = vacancy.get("province") or {}
+
+    city_name = city_data.get("name") if isinstance(city_data, dict) else None
+    province_name = province_data.get("name") if isinstance(province_data, dict) else None
 
     parts = []
     if city_name:
@@ -322,12 +547,12 @@ def _format_salary_range(vacancy: dict[str, Any]) -> str | None:
 def _collect_tags(vacancy: dict[str, Any]) -> list[str]:
     tags = []
 
-    job_role = vacancy.get("jobRole", {})
-    if job_role and job_role.get("displayName"):
+    job_role = vacancy.get("jobRole") or {}
+    if isinstance(job_role, dict) and job_role.get("displayName"):
         tags.append(job_role["displayName"])
 
-    job_spec = vacancy.get("jobSpecialization", {})
-    if job_spec and job_spec.get("displayName"):
+    job_spec = vacancy.get("jobSpecialization") or {}
+    if isinstance(job_spec, dict) and job_spec.get("displayName"):
         tags.append(job_spec["displayName"])
 
     job_func = vacancy.get("jobFunction")

@@ -8,11 +8,14 @@ from unittest.mock import MagicMock, patch
 
 from lokerbot.models import Job
 from lokerbot.scrapers.kitalulus import (
+    _bump_page,
     _collect_tags,
     _extract_description,
+    _fetch_vacancies_page,
     _format_job_type,
     _format_location,
     _format_salary_range,
+    _normalize_template,
     _parse_and_filter_jobs,
     _parse_microsecond_timestamp,
     _parse_vacancy_doc,
@@ -196,9 +199,33 @@ class KitaLulusParserTests(unittest.TestCase):
         self.assertEqual(len(jobs), len(valid_jobs))
 
 
+_FAKE_REQUEST_TEMPLATE = {
+    "method": "POST",
+    "endpoint": "https://gql.kitalulus.com/graphql",
+    "headers": {"content-type": "application/json"},
+    "params": None,
+    "body": {
+        "operationName": "Vacancies",
+        "variables": {"pagination": {"page": 1, "limit": 30}},
+        "query": "query Vacancies($pagination: CommonFilter) { vacanciesV4 { list { id } } }",
+    },
+}
+
+
 class KitaLulusScrapeTests(unittest.TestCase):
     def setUp(self):
         self.api_response = load_api_response_fixture()
+        recent_us_timestamp = int(
+            datetime.now(tz=timezone.utc).timestamp() * 1_000_000
+        )
+        for vacancy in self.api_response["data"]["vacanciesV3"]["list"]:
+            vacancy["updatedAt"] = recent_us_timestamp
+        bootstrap_patcher = patch(
+            "lokerbot.scrapers.kitalulus._bootstrap_request_template",
+            return_value=_FAKE_REQUEST_TEMPLATE,
+        )
+        self.mock_bootstrap = bootstrap_patcher.start()
+        self.addCleanup(bootstrap_patcher.stop)
 
     @patch("lokerbot.scrapers.kitalulus._build_session")
     @patch("lokerbot.scrapers.kitalulus._fetch_vacancies_page")
@@ -268,3 +295,189 @@ class KitaLulusScrapeTests(unittest.TestCase):
         jobs = scrape(max_pages=2, session=mock_session)
         self.assertGreater(len(jobs), 0)
         self.assertEqual(mock_fetch.call_count, 2)
+
+    @patch("lokerbot.scrapers.kitalulus._parse_and_filter_jobs")
+    @patch("lokerbot.scrapers.kitalulus._build_session")
+    @patch("lokerbot.scrapers.kitalulus._fetch_vacancies_page")
+    def test_scrape_bumps_page_between_calls(
+        self, mock_fetch, mock_build_session, mock_parse
+    ):
+        mock_session = MagicMock()
+        mock_build_session.return_value = mock_session
+        page1 = {"list": [], "hasNextPage": True, "elements": 60}
+        page2 = {"list": [], "hasNextPage": True}
+        page3 = {"list": [], "hasNextPage": False}
+        mock_fetch.side_effect = [page1, page2, page3]
+        sentinel_job = MagicMock(spec=Job)
+        mock_parse.return_value = [sentinel_job]
+
+        scrape(max_pages=3, session=mock_session)
+
+        page_args = [call.kwargs.get("page") for call in mock_fetch.call_args_list]
+        self.assertEqual(page_args, [1, 2, 3])
+
+    @patch("lokerbot.scrapers.kitalulus._parse_and_filter_jobs")
+    @patch("lokerbot.scrapers.kitalulus._fetch_vacancies_page")
+    def test_scrape_runs_bootstrap_once(self, mock_fetch, mock_parse):
+        mock_fetch.return_value = {"list": [], "hasNextPage": False}
+        mock_parse.return_value = [MagicMock(spec=Job)]
+        scrape(max_pages=1, session=MagicMock())
+
+        self.assertEqual(self.mock_bootstrap.call_count, 1)
+
+
+class KitaLulusRequestTemplateTests(unittest.TestCase):
+    def test_bump_page_updates_pagination_slot(self):
+        variables = {"pagination": {"page": 1, "limit": 30}, "keyword": ""}
+        _bump_page(variables, 7)
+        self.assertEqual(variables["pagination"]["page"], 7)
+        self.assertEqual(variables["pagination"]["limit"], 30)
+
+    def test_bump_page_updates_legacy_filter_slot(self):
+        variables = {"filter": {"page": 0, "limit": 20}, "keyword": ""}
+        _bump_page(variables, 4)
+        self.assertEqual(variables["filter"]["page"], 4)
+
+    def test_bump_page_updates_both_slots_when_present(self):
+        variables = {
+            "pagination": {"page": 0, "limit": 30},
+            "filter": {"page": 0, "limit": 20},
+        }
+        _bump_page(variables, 9)
+        self.assertEqual(variables["pagination"]["page"], 9)
+        self.assertEqual(variables["filter"]["page"], 9)
+
+    def test_bump_page_creates_pagination_if_missing(self):
+        variables = {"keyword": ""}
+        _bump_page(variables, 3)
+        self.assertEqual(variables["pagination"], {"page": 3})
+
+    def test_normalize_template_get_request(self):
+        captured = {
+            "method": "GET",
+            "url": "https://gql.kitalulus.com/graphql?operationName=Vacancies&variables=%7B%22pagination%22%3A%7B%22page%22%3A1%2C%22limit%22%3A30%7D%7D",
+            "headers": {
+                "x-apollo-operation-name": "Vacancies",
+                "Host": "gql.kitalulus.com",
+                "Content-Length": "0",
+            },
+            "post_data": None,
+        }
+        template = _normalize_template(captured)
+        self.assertEqual(template["method"], "GET")
+        self.assertEqual(template["endpoint"], "https://gql.kitalulus.com/graphql")
+        self.assertEqual(template["params"]["operationName"], "Vacancies")
+        self.assertEqual(
+            json.loads(template["params"]["variables"])["pagination"]["page"], 1
+        )
+        self.assertNotIn("Host", template["headers"])
+        self.assertNotIn("Content-Length", template["headers"])
+
+    def test_normalize_template_post_request(self):
+        body = {
+            "operationName": "Vacancies",
+            "variables": {"pagination": {"page": 1, "limit": 30}},
+            "query": "query Vacancies ...",
+        }
+        captured = {
+            "method": "POST",
+            "url": "https://gql.kitalulus.com/graphql",
+            "headers": {"content-type": "application/json"},
+            "post_data": json.dumps(body),
+        }
+        template = _normalize_template(captured)
+        self.assertEqual(template["method"], "POST")
+        self.assertEqual(template["body"], body)
+
+    def test_fetch_vacancies_page_post_replays_with_bumped_pagination(self):
+        template = {
+            "method": "POST",
+            "endpoint": "https://gql.kitalulus.com/graphql",
+            "headers": {"content-type": "application/json"},
+            "params": None,
+            "body": {
+                "operationName": "Vacancies",
+                "variables": {"pagination": {"page": 1, "limit": 30}},
+                "query": "...",
+            },
+        }
+        session = MagicMock()
+        session.post.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(
+                return_value={"data": {"vacanciesV4": {"list": [], "hasNextPage": False}}}
+            ),
+        )
+        _fetch_vacancies_page(session=session, template=template, page=4)
+
+        sent_payload = json.loads(session.post.call_args.kwargs["data"])
+        self.assertEqual(sent_payload["variables"]["pagination"]["page"], 4)
+
+    def test_fetch_vacancies_page_get_replays_with_bumped_filter(self):
+        template = {
+            "method": "GET",
+            "endpoint": "https://gql.kitalulus.com/graphql",
+            "headers": {"x-apollo-operation-name": "vacanciesV3"},
+            "params": {
+                "operationName": "vacanciesV3",
+                "variables": json.dumps({"filter": {"page": 0, "limit": 20}}, separators=(",", ":")),
+            },
+            "body": None,
+        }
+        session = MagicMock()
+        session.get.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(
+                return_value={"data": {"vacanciesV3": {"list": [], "hasNextPage": False}}}
+            ),
+        )
+        _fetch_vacancies_page(session=session, template=template, page=2)
+
+        sent_params = session.get.call_args.kwargs["params"]
+        self.assertEqual(json.loads(sent_params["variables"])["filter"]["page"], 2)
+
+    def test_fetch_vacancies_page_raises_on_graphql_errors(self):
+        template = {
+            "method": "POST",
+            "endpoint": "https://gql.kitalulus.com/graphql",
+            "headers": {"content-type": "application/json"},
+            "params": None,
+            "body": {"variables": {"pagination": {"page": 1}}},
+        }
+        session = MagicMock()
+        session.post.return_value = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"errors": [{"message": "boom"}]}),
+        )
+        with self.assertRaises(ValueError):
+            _fetch_vacancies_page(session=session, template=template, page=1)
+
+
+class KitaLulusRelativeTimeTests(unittest.TestCase):
+    def setUp(self):
+        from lokerbot.scrapers.kitalulus import _parse_indonesian_relative_time
+        self.parse = _parse_indonesian_relative_time
+        self.now = datetime(2026, 5, 7, 12, 0, 0, tzinfo=timezone.utc)
+
+    def test_minutes(self):
+        result = self.parse("Terakhir diperbarui 5 menit yang lalu", self.now)
+        self.assertEqual(result, self.now - timedelta(minutes=5))
+
+    def test_hari(self):
+        result = self.parse("3 hari yang lalu", self.now)
+        self.assertEqual(result, self.now - timedelta(days=3))
+
+    def test_minggu(self):
+        result = self.parse("2 minggu yang lalu", self.now)
+        self.assertEqual(result, self.now - timedelta(weeks=2))
+
+    def test_baru_saja(self):
+        self.assertEqual(self.parse("baru saja", self.now), self.now)
+
+    def test_kemarin(self):
+        self.assertEqual(self.parse("kemarin", self.now), self.now - timedelta(days=1))
+
+    def test_unknown_returns_none(self):
+        self.assertIsNone(self.parse("invalid format", self.now))
+        self.assertIsNone(self.parse(None, self.now))
+        self.assertIsNone(self.parse("", self.now))
