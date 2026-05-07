@@ -4,13 +4,15 @@ import json
 import re
 import time
 import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import parse_qs, urljoin, urlparse
 
+import requests
 from bs4 import BeautifulSoup
-from playwright.sync_api import Playwright, sync_playwright
 
+from lokerbot.http_client import SessionPool, build_session
 from lokerbot.models import Job, utc_now_iso
 from lokerbot.utils import (
     clean_string as _clean_string,
@@ -22,8 +24,8 @@ from lokerbot.utils import (
 )
 
 LOKERID_LISTING_URL = "https://www.loker.id/cari-lowongan-kerja"
-DEFAULT_BROWSER_NAME = "firefox"
-PAGE_TIMEOUT_MS = 120_000
+LISTING_PAGE_SIZE = 21
+DETAIL_WORKER_COUNT = 10
 CARD_SELECTORS = (
     "article.job",
     ".job-card",
@@ -58,7 +60,7 @@ def scrape(
     max_pages: int | None = 1,
     fetch_details: bool = False,
     delay: float = 0.0,
-    browser_name: str = DEFAULT_BROWSER_NAME,
+    session: requests.Session | None = None,
     progress: Any | None = None,
 ) -> list[Job]:
     if max_pages is not None and max_pages < 1:
@@ -66,34 +68,9 @@ def scrape(
     if delay < 0:
         raise ValueError("delay must be non-negative")
 
-    with sync_playwright() as playwright:
-        browser = _launch_browser(playwright, browser_name)
-        try:
-            context = browser.new_context(locale="id-ID", viewport={"width": 1280, "height": 720})
-            try:
-                return _scrape_with_context(
-                    context,
-                    max_pages=max_pages,
-                    fetch_details=fetch_details,
-                    delay=delay,
-                    progress=progress,
-                )
-            finally:
-                context.close()
-        finally:
-            browser.close()
+    owns_session = session is None
+    session = session or build_session()
 
-
-def _scrape_with_context(
-    context,
-    *,
-    max_pages: int | None,
-    fetch_details: bool,
-    delay: float,
-    progress: Any | None = None,
-) -> list[Job]:
-    listing_page = context.new_page()
-    detail_page = None
     scraped_at = utc_now_iso()
     scraped_at_dt = _parse_iso_datetime(scraped_at)
     if scraped_at_dt is None:
@@ -103,21 +80,79 @@ def _scrape_with_context(
     seen_job_ids: set[str] = set()
     page_number = 1
     last_page: int | None = None
+    detail_executor: ThreadPoolExecutor | None = None
+    session_pool: SessionPool | None = None
+    pending_detail_futures: list[tuple[Job, Any]] = []
+    batch_size = 5
+
+    use_session_pool = owns_session
 
     try:
+        detail_executor = ThreadPoolExecutor(max_workers=DETAIL_WORKER_COUNT)
+        if use_session_pool:
+            session_pool = SessionPool(size=DETAIL_WORKER_COUNT)
+
         while True:
             if page_number > 1 and delay:
                 time.sleep(delay)
 
             if progress is not None:
-                progress(f"loading page {page_number}")
+                if max_pages is not None and last_page is not None:
+                    total_text: Any = min(max_pages, last_page)
+                elif max_pages is not None:
+                    total_text = max_pages
+                elif last_page is not None:
+                    total_text = last_page
+                else:
+                    total_text = "?"
+                progress(f"loading page {page_number}/{total_text}")
 
-            listing_page.goto(_build_listing_url(page_number), wait_until="networkidle", timeout=PAGE_TIMEOUT_MS)
-            html = listing_page.content()
+            response = session.get(_build_listing_url(page_number), timeout=30)
+            response.raise_for_status()
+            html = response.text
+
             page_jobs, page_meta = _parse_listing_html(html, scraped_at=scraped_at, scraped_at_dt=scraped_at_dt)
 
             if last_page is None:
                 last_page = _extract_last_page(page_meta)
+
+            new_jobs: list[Job] = []
+            for job in page_jobs:
+                if not _is_recent_job_post(job.posted_at, scraped_at_dt):
+                    continue
+                if job.job_id in seen_job_ids:
+                    continue
+                seen_job_ids.add(job.job_id)
+                new_jobs.append(job)
+
+            if detail_executor is not None and new_jobs:
+                if session_pool is not None:
+                    pending_detail_futures.extend(
+                        _enrich_jobs_from_detail(
+                            detail_executor,
+                            session_pool,
+                            new_jobs,
+                            delay=delay,
+                            include_description=fetch_details,
+                        )
+                    )
+                else:
+                    pending_detail_futures.extend(
+                        _enrich_jobs_from_detail_with_session(
+                            detail_executor,
+                            session,
+                            new_jobs,
+                            delay=delay,
+                            include_description=fetch_details,
+                        )
+                    )
+
+                if len(pending_detail_futures) >= batch_size * LISTING_PAGE_SIZE:
+                    head = pending_detail_futures[: batch_size * LISTING_PAGE_SIZE]
+                    _drain_pending_detail_enrichment(head)
+                    pending_detail_futures = pending_detail_futures[batch_size * LISTING_PAGE_SIZE :]
+
+            jobs.extend(new_jobs)
 
             if progress is not None:
                 if max_pages is not None and last_page is not None:
@@ -130,26 +165,6 @@ def _scrape_with_context(
                     total_text = "?"
                 progress(f"page {page_number}/{total_text} • {len(jobs)} jobs")
 
-            for job in page_jobs:
-                if not _is_recent_job_post(job.posted_at, scraped_at_dt):
-                    continue
-
-                if fetch_details or _job_needs_detail_enrichment(job):
-                    if detail_page is None:
-                        detail_page = context.new_page()
-                    try:
-                        _enrich_job_from_detail(detail_page, job, include_description=fetch_details)
-                    except Exception as exc:
-                        warnings.warn(
-                            f"Failed to enrich Loker.id job {job.job_id} ({job.title}): {exc}",
-                            RuntimeWarning,
-                        )
-
-                if job.job_id in seen_job_ids:
-                    continue
-                seen_job_ids.add(job.job_id)
-                jobs.append(job)
-
             if not page_jobs:
                 break
             if max_pages is not None and page_number >= max_pages:
@@ -160,22 +175,114 @@ def _scrape_with_context(
                 break
 
             page_number += 1
-            if progress is not None:
-                progress(f"loading page {page_number}")
     finally:
-        listing_page.close()
-        if detail_page is not None:
-            detail_page.close()
+        try:
+            _drain_pending_detail_enrichment(pending_detail_futures)
+        finally:
+            if session_pool is not None:
+                session_pool.close_all()
+            if detail_executor is not None:
+                detail_executor.shutdown(wait=True)
+            if owns_session:
+                session.close()
 
     if progress is not None:
         progress(f"done • {len(jobs)} jobs")
     return jobs
 
 
-def _launch_browser(playwright: Playwright, browser_name: str):
-    if browser_name not in {"chromium", "firefox", "webkit"}:
-        raise ValueError("browser_name must be chromium, firefox, or webkit")
-    return getattr(playwright, browser_name).launch(headless=True)
+def _enrich_jobs_from_detail(
+    executor: ThreadPoolExecutor,
+    session_pool: SessionPool,
+    jobs: list[Job],
+    *,
+    delay: float,
+    include_description: bool,
+) -> list[tuple[Job, Any]]:
+    targets = [job for job in jobs if include_description or _job_needs_detail_enrichment(job)]
+    if not targets:
+        return []
+    return [
+        (
+            job,
+            executor.submit(
+                _enrich_job_with_delay,
+                session_pool,
+                job,
+                delay,
+                include_description,
+            ),
+        )
+        for job in targets
+    ]
+
+
+def _enrich_jobs_from_detail_with_session(
+    executor: ThreadPoolExecutor,
+    session: requests.Session,
+    jobs: list[Job],
+    *,
+    delay: float,
+    include_description: bool,
+) -> list[tuple[Job, Any]]:
+    targets = [job for job in jobs if include_description or _job_needs_detail_enrichment(job)]
+    if not targets:
+        return []
+    return [
+        (
+            job,
+            executor.submit(
+                _enrich_job_with_delay_using_session,
+                session,
+                job,
+                delay,
+                include_description,
+            ),
+        )
+        for job in targets
+    ]
+
+
+def _drain_pending_detail_enrichment(pending_detail_futures: list[tuple[Job, Any]]) -> None:
+    if not pending_detail_futures:
+        return
+    future_to_job = {future: job for job, future in pending_detail_futures}
+    for future in as_completed(future_to_job):
+        job = future_to_job[future]
+        try:
+            future.result()
+        except Exception as exc:
+            warnings.warn(
+                f"Failed to enrich Loker.id job {job.job_id} ({job.title}): {exc}",
+                RuntimeWarning,
+            )
+
+
+def _enrich_job_with_delay(
+    session_pool: SessionPool,
+    job: Job,
+    delay: float,
+    include_description: bool,
+) -> None:
+    session = session_pool.acquire()
+    try:
+        _enrich_job_from_detail(session, job, include_description=include_description)
+    finally:
+        if delay > 0:
+            time.sleep(delay)
+
+
+def _enrich_job_with_delay_using_session(
+    session: requests.Session,
+    job: Job,
+    delay: float,
+    include_description: bool,
+) -> None:
+    try:
+        _enrich_job_from_detail(session, job, include_description=include_description)
+    finally:
+        if delay > 0:
+            time.sleep(delay)
 
 
 def _parse_listing_html(
@@ -615,10 +722,10 @@ def _extract_description(record: dict[str, Any]) -> str | None:
     return None
 
 
-def _enrich_job_from_detail(page, job: Job, *, include_description: bool = False) -> None:
-    page.goto(job.url, wait_until="networkidle", timeout=PAGE_TIMEOUT_MS)
-    detail_html = page.content()
-    detail_job = _extract_detail_job(detail_html, scraped_at=job.scraped_at)
+def _enrich_job_from_detail(session: requests.Session, job: Job, *, include_description: bool = False) -> None:
+    response = session.get(job.url, timeout=30)
+    response.raise_for_status()
+    detail_job = _extract_detail_job(response.text, scraped_at=job.scraped_at)
     if detail_job is None:
         return
     _merge_job(job, detail_job)

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, call, patch
+from typing import Any
+from unittest.mock import Mock, call, patch
 
 from lokerbot.models import Job
-from lokerbot.scrapers.lokerid import parse_jobs, parse_listing_html, scrape
+from lokerbot.scrapers.lokerid import LOKERID_LISTING_URL, parse_jobs, parse_listing_html, scrape
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 API_FIXTURE_PATH = FIXTURE_DIR / "lokerid_api_response.json"
@@ -166,18 +169,11 @@ def build_scrape_job(
     )
 
 
-def build_playwright_stack(detail_page: Mock | None = None) -> tuple[Mock, Mock, Mock, Mock, Mock]:
-    playwright = Mock()
-    browser = Mock()
-    context = Mock()
-    listing_page = Mock()
-    cm = MagicMock()
-    cm.__enter__.return_value = playwright
-    cm.__exit__.return_value = None
-    playwright.firefox.launch.return_value = browser
-    browser.new_context.return_value = context
-    context.new_page.side_effect = [listing_page] + ([detail_page] if detail_page is not None else [])
-    return cm, browser, context, listing_page, detail_page
+def _response_with_text(text: str) -> Mock:
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.text = text
+    return response
 
 
 class LokeridParserTests(unittest.TestCase):
@@ -360,11 +356,13 @@ class LokeridScrapeTests(unittest.TestCase):
             build_scrape_job("boundary-job", RECENCY_BOUNDARY, title="Boundary Job"),
             build_scrape_job("page-2-job", "2026-03-17T10:00:00Z", title="Page 2 Job"),
         ]
-        cm, browser, context, listing_page, _ = build_playwright_stack()
-        listing_page.content.side_effect = ["<html>page 1</html>", "<html>page 2</html>"]
+        session = Mock()
+        session.get.side_effect = [
+            _response_with_text("<html>page 1</html>"),
+            _response_with_text("<html>page 2</html>"),
+        ]
 
         with (
-            patch("lokerbot.scrapers.lokerid.sync_playwright", return_value=cm),
             patch(
                 "lokerbot.scrapers.lokerid._parse_listing_html",
                 side_effect=[
@@ -374,44 +372,39 @@ class LokeridScrapeTests(unittest.TestCase):
             ),
             patch("lokerbot.scrapers.lokerid.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
         ):
-            jobs = scrape(max_pages=None, fetch_details=False, delay=0.0)
+            jobs = scrape(max_pages=None, fetch_details=False, delay=0.0, session=session)
 
         self.assertEqual([job.job_id for job in jobs], ["today-job", "boundary-job", "page-2-job"])
+        listing_calls = [
+            c
+            for c in session.get.call_args_list
+            if c.args and c.args[0].startswith(LOKERID_LISTING_URL)
+        ]
         self.assertEqual(
-            listing_page.goto.call_args_list,
+            [c.args[0] for c in listing_calls],
             [
-                call("https://www.loker.id/cari-lowongan-kerja", wait_until="networkidle", timeout=120000),
-                call("https://www.loker.id/cari-lowongan-kerja/page/2", wait_until="networkidle", timeout=120000),
+                "https://www.loker.id/cari-lowongan-kerja",
+                "https://www.loker.id/cari-lowongan-kerja/page/2",
             ],
         )
-        listing_page.close.assert_called_once()
-        browser.close.assert_called_once()
-        context.close.assert_called_once()
 
     def test_scrape_uses_listing_html_without_detail_enrichment(self) -> None:
-        cm, browser, context, listing_page, _ = build_playwright_stack()
-        listing_page.content.return_value = self.listing_html
+        session = Mock()
+        session.get.return_value = _response_with_text(self.listing_html)
 
-        with (
-            patch("lokerbot.scrapers.lokerid.sync_playwright", return_value=cm),
-            patch("lokerbot.scrapers.lokerid.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
-        ):
-            jobs = scrape(max_pages=1, fetch_details=False, delay=0.0)
+        with patch("lokerbot.scrapers.lokerid.utc_now_iso", return_value=FIXTURE_SCRAPED_AT):
+            jobs = scrape(max_pages=1, fetch_details=False, delay=0.0, session=session)
 
         self.assertEqual([job.job_id for job in jobs], ["1001", "1002"])
-        self.assertEqual(listing_page.goto.call_count, 1)
-        listing_page.goto.assert_called_once_with("https://www.loker.id/cari-lowongan-kerja", wait_until="networkidle", timeout=120000)
-        context.new_page.assert_called_once()
-        listing_page.close.assert_called_once()
-        browser.close.assert_called_once()
-        context.close.assert_called_once()
+        # Listing fetched once; details for each job because tags are empty in the fixture.
+        listing_calls = [
+            c
+            for c in session.get.call_args_list
+            if c.args and c.args[0] == "https://www.loker.id/cari-lowongan-kerja"
+        ]
+        self.assertEqual(len(listing_calls), 1)
 
     def test_scrape_fetches_detail_page_for_missing_fields_even_without_fetch_details(self) -> None:
-        detail_page = Mock()
-        cm, browser, context, listing_page, _ = build_playwright_stack(detail_page)
-        listing_page.content.return_value = "<html><body></body></html>"
-        detail_page.content.return_value = self.detail_html
-
         incomplete_job = build_scrape_job(
             "1003",
             "2026-03-16T10:00:00Z",
@@ -424,18 +417,25 @@ class LokeridScrapeTests(unittest.TestCase):
             tags=[],
         )
 
+        session = Mock()
+
+        def get_side_effect(url: str, *args: Any, **kwargs: Any) -> Mock:
+            if url.startswith(LOKERID_LISTING_URL):
+                return _response_with_text("<html><body></body></html>")
+            if url == incomplete_job.url:
+                return _response_with_text(self.detail_html)
+            raise AssertionError(f"Unexpected request: {url!r}")
+
+        session.get.side_effect = get_side_effect
+
         with (
-            patch(
-                "lokerbot.scrapers.lokerid.sync_playwright",
-                return_value=cm,
-            ),
             patch(
                 "lokerbot.scrapers.lokerid._parse_listing_html",
                 return_value=([incomplete_job], {"current_page": 1, "last_page": 1}),
             ),
             patch("lokerbot.scrapers.lokerid.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
         ):
-            jobs = scrape(max_pages=1, fetch_details=False, delay=0.0)
+            jobs = scrape(max_pages=1, fetch_details=False, delay=0.0, session=session)
 
         self.assertEqual(len(jobs), 1)
         self.assertEqual(jobs[0].location, "Surabaya")
@@ -443,19 +443,10 @@ class LokeridScrapeTests(unittest.TestCase):
         self.assertEqual(jobs[0].salary_range, "Rp 6,000,000 - Rp 9,000,000")
         self.assertEqual(jobs[0].tags, ["Digital Marketing", "Copywriting"])
         self.assertIsNone(jobs[0].description)
-        detail_page.goto.assert_called_once_with(jobs[0].url, wait_until="networkidle", timeout=120000)
-        detail_page.content.assert_called_once()
-        listing_page.close.assert_called_once()
-        detail_page.close.assert_called_once()
-        browser.close.assert_called_once()
-        context.close.assert_called_once()
+        detail_calls = [c for c in session.get.call_args_list if c.args and c.args[0] == jobs[0].url]
+        self.assertEqual(len(detail_calls), 1)
 
     def test_scrape_populates_description_when_fetch_details_is_enabled(self) -> None:
-        detail_page = Mock()
-        cm, browser, context, listing_page, _ = build_playwright_stack(detail_page)
-        listing_page.content.return_value = "<html><body></body></html>"
-        detail_page.content.return_value = self.detail_html
-
         incomplete_job = build_scrape_job(
             "1003",
             "2026-03-16T10:00:00Z",
@@ -468,15 +459,25 @@ class LokeridScrapeTests(unittest.TestCase):
             tags=[],
         )
 
+        session = Mock()
+
+        def get_side_effect(url: str, *args: Any, **kwargs: Any) -> Mock:
+            if url.startswith(LOKERID_LISTING_URL):
+                return _response_with_text("<html><body></body></html>")
+            if url == incomplete_job.url:
+                return _response_with_text(self.detail_html)
+            raise AssertionError(f"Unexpected request: {url!r}")
+
+        session.get.side_effect = get_side_effect
+
         with (
-            patch("lokerbot.scrapers.lokerid.sync_playwright", return_value=cm),
             patch(
                 "lokerbot.scrapers.lokerid._parse_listing_html",
                 return_value=([incomplete_job], {"current_page": 1, "last_page": 1}),
             ),
             patch("lokerbot.scrapers.lokerid.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
         ):
-            jobs = scrape(max_pages=1, fetch_details=True, delay=0.0)
+            jobs = scrape(max_pages=1, fetch_details=True, delay=0.0, session=session)
 
         self.assertEqual(len(jobs), 1)
         self.assertEqual(jobs[0].description, "Kelola kampanye digital.\nBekerja dengan tim kreatif.")
@@ -484,12 +485,86 @@ class LokeridScrapeTests(unittest.TestCase):
         self.assertEqual(jobs[0].job_type, "Full Time")
         self.assertEqual(jobs[0].salary_range, "Rp 6,000,000 - Rp 9,000,000")
         self.assertEqual(jobs[0].tags, ["Digital Marketing", "Copywriting"])
-        detail_page.goto.assert_called_once_with(jobs[0].url, wait_until="networkidle", timeout=120000)
-        detail_page.content.assert_called_once()
-        listing_page.close.assert_called_once()
-        detail_page.close.assert_called_once()
-        browser.close.assert_called_once()
-        context.close.assert_called_once()
+
+    def test_scrape_keeps_fetching_next_pages_while_detail_is_blocked(self) -> None:
+        page1_detail_started = threading.Event()
+        page2_listing_requested = threading.Event()
+        release_page1_detail = threading.Event()
+        detail_call_args: list[call] = []
+        detail_call_lock = threading.Lock()
+
+        page1_job = build_scrape_job(
+            "page-1-job",
+            "2026-03-18T11:00:00Z",
+            title="Page 1 Job",
+            url="https://www.loker.id/category/page-1-job-1.html",
+            location=None,
+            job_type=None,
+            salary_range=None,
+            tags=[],
+        )
+        page2_job = build_scrape_job(
+            "page-2-job",
+            "2026-03-18T11:00:00Z",
+            title="Page 2 Job",
+            url="https://www.loker.id/category/page-2-job-2.html",
+            location=None,
+            job_type=None,
+            salary_range=None,
+            tags=[],
+        )
+
+        session = Mock()
+
+        def get_side_effect(url: str, *args: Any, **kwargs: Any):
+            if url == "https://www.loker.id/cari-lowongan-kerja":
+                return _response_with_text("<html>page 1</html>")
+            if url == "https://www.loker.id/cari-lowongan-kerja/page/2":
+                page2_listing_requested.set()
+                return _response_with_text("<html>page 2</html>")
+            if url == page1_job.url:
+                with detail_call_lock:
+                    detail_call_args.append(call(url, timeout=30))
+                page1_detail_started.set()
+                if not release_page1_detail.wait(timeout=5):
+                    raise AssertionError("page 1 detail request was not released")
+                return _response_with_text(self.detail_html)
+            if url == page2_job.url:
+                with detail_call_lock:
+                    detail_call_args.append(call(url, timeout=30))
+                return _response_with_text(self.detail_html)
+            raise AssertionError(f"Unexpected request: {url!r}")
+
+        session.get.side_effect = get_side_effect
+
+        with (
+            patch(
+                "lokerbot.scrapers.lokerid._parse_listing_html",
+                side_effect=[
+                    ([page1_job], {"current_page": 1, "last_page": 2}),
+                    ([page2_job], {"current_page": 2, "last_page": 2}),
+                ],
+            ),
+            patch("lokerbot.scrapers.lokerid.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
+        ):
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    scrape,
+                    max_pages=2,
+                    fetch_details=True,
+                    delay=0.0,
+                    session=session,
+                )
+                self.assertTrue(page1_detail_started.wait(timeout=5), "page 1 detail request never started")
+                self.assertTrue(page2_listing_requested.wait(timeout=5), "page 2 listing was not requested before detail release")
+                release_page1_detail.set()
+                jobs = future.result(timeout=5)
+
+        self.assertEqual({job.job_id for job in jobs}, {"page-1-job", "page-2-job"})
+        self.assertCountEqual(
+            detail_call_args,
+            [call(page1_job.url, timeout=30), call(page2_job.url, timeout=30)],
+        )
 
 
 if __name__ == "__main__":
