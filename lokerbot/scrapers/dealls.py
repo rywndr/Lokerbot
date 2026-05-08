@@ -65,9 +65,12 @@ def scrape(
     delay: float = 0.0,
     session: requests.Session | None = None,
     progress: Any | None = None,
+    max_jobs: int | None = None,
 ) -> list[Job]:
     if max_pages is not None and max_pages < 1:
         raise ValueError("max_pages must be at least 1")
+    if max_jobs is not None and max_jobs < 1:
+        raise ValueError("max_jobs must be at least 1")
     if delay < 0:
         raise ValueError("delay must be non-negative")
 
@@ -104,32 +107,37 @@ def scrape(
         if progress is not None:
             progress(f"page 1/{last_page} • {len(jobs)} jobs")
 
-        for page in range(2, last_page + 1):
-            if delay:
-                time.sleep(delay)
-            try:
-                page_payload = _fetch_api_page(session, page=page, query_params=query_params, app_version=app_version)
-            except requests.HTTPError as exc:
-                status_code = exc.response.status_code if exc.response is not None else None
-                if max_pages is None and status_code == 400:
-                    warnings.warn(
-                        f"Dealls reported more pages than the API allows; page {page} was rejected, so pagination stopped at page {page - 1}.",
-                        RuntimeWarning,
+        if max_jobs is None or len(jobs) < max_jobs:
+            for page in range(2, last_page + 1):
+                if delay:
+                    time.sleep(delay)
+                try:
+                    page_payload = _fetch_api_page(session, page=page, query_params=query_params, app_version=app_version)
+                except requests.HTTPError as exc:
+                    status_code = exc.response.status_code if exc.response is not None else None
+                    if max_pages is None and status_code == 400:
+                        warnings.warn(
+                            f"Dealls reported more pages than the API allows; page {page} was rejected, so pagination stopped at page {page - 1}.",
+                            RuntimeWarning,
+                        )
+                        break
+                    raise
+                jobs.extend(
+                    _parse_and_optionally_enrich(
+                        page_payload,
+                        session=session,
+                        fetch_details=fetch_details,
+                        app_version=app_version,
+                        scraped_at=scraped_at,
                     )
-                    break
-                raise
-            jobs.extend(
-                _parse_and_optionally_enrich(
-                    page_payload,
-                    session=session,
-                    fetch_details=fetch_details,
-                    app_version=app_version,
-                    scraped_at=scraped_at,
                 )
-            )
-            if progress is not None:
-                progress(f"page {page}/{last_page} • {len(jobs)} jobs")
+                if progress is not None:
+                    progress(f"page {page}/{last_page} • {len(jobs)} jobs")
+                if max_jobs is not None and len(jobs) >= max_jobs:
+                    break
 
+        if max_jobs is not None:
+            jobs = jobs[:max_jobs]
         if progress is not None:
             progress(f"done • {len(jobs)} jobs")
         return jobs

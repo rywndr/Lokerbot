@@ -21,6 +21,7 @@ class Job:
     tags: list[str] = field(default_factory=list)
     posted_at: str | None = None
     scraped_at: str = field(default_factory=utc_now_iso)
+    source: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -35,4 +36,5 @@ class Job:
             "tags": list(self.tags),
             "posted_at": self.posted_at,
             "scraped_at": self.scraped_at,
+            "source": self.source,
         }

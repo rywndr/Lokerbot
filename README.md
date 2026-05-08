@@ -29,6 +29,12 @@ The CLI supports `dealls`, `glints`, `kitalulus`, `karirhub`, and `lokerid`, and
 
 Use `--fetch-details` to enrich listings with source-owned detail data. When enabled, snapshots can include missing location, job type, salary, tags, and a plain-text `description`. Without `--fetch-details`, `description` stays `null`.
 
+Use `--all-sources` to scrape every supported board in one run. The runs are sequential and the results are merged into a single combined snapshot under `output/all/`. `--all-sources` and `--source` are mutually exclusive.
+
+Use `--max-jobs N` to cap each scraper's output at the first `N` jobs after the recency filter. When `--max-jobs` is set without an explicit `--max-pages` or `--all-pages`, the CLI auto-enables `--all-pages` so each scraper paginates until it reaches `N` (or runs out). This gives a predictable per-platform batch size for downstream embedding.
+
+Use `--benchmark` to run the selected source (or every source with `--all-sources`) as a pure performance test. The CLI prints a JSON summary to stdout with elapsed seconds, jobs scraped, and jobs-per-second per source, and writes no snapshot files.
+
 `lokerid` is a browser-driven scraper. It reads the public listings page, prefers the embedded Remix loader payload, falls back to rendered job cards when needed, and opens detail pages only when the listing data is incomplete.
 
 ### Examples
@@ -41,11 +47,15 @@ python main.py --source kitalulus --max-pages 1 --fetch-details
 python main.py --source karirhub --max-pages 3
 python main.py --source karirhub --all-pages
 python main.py --source lokerid --max-pages 1
+python main.py --all-sources --max-jobs 50
+python main.py --all-sources --max-jobs 100 --fetch-details
+python main.py --source dealls --benchmark --max-pages 3
+python main.py --all-sources --benchmark --max-jobs 25
 ```
 
 ## Output
 
-JSON snapshots are written under `output/<source>/`.
+Single-source runs are written to `output/<source>/<source>_<timestamp>.json`. `--all-sources` runs are merged into a single combined snapshot at `output/all/all_<timestamp>.json`; the per-record `source` field is what downstream consumers use to filter by board.
 
 Each saved record follows the shared `Job` model in `lokerbot/models.py` and includes:
 
@@ -60,8 +70,11 @@ Each saved record follows the shared `Job` model in `lokerbot/models.py` and inc
 - `tags`
 - `posted_at`
 - `scraped_at`
+- `source`
 
 `description` is stored as plain text and is only populated when `--fetch-details` is included.
+
+`source` is the registry key of the scraper that produced the record (e.g. `dealls`, `glints`, `kitalulus`, `karirhub`, `lokerid`). It is stamped on every job in both single-source and `--all-sources` runs.
 
 All scraper implementations only include listings whose `posted_at` falls between the scrape time and 30 days back, so older or future-dated jobs are excluded from the saved output.
 

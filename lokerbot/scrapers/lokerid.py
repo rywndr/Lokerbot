@@ -62,9 +62,12 @@ def scrape(
     delay: float = 0.0,
     session: requests.Session | None = None,
     progress: Any | None = None,
+    max_jobs: int | None = None,
 ) -> list[Job]:
     if max_pages is not None and max_pages < 1:
         raise ValueError("max_pages must be at least 1")
+    if max_jobs is not None and max_jobs < 1:
+        raise ValueError("max_jobs must be at least 1")
     if delay < 0:
         raise ValueError("delay must be non-negative")
 
@@ -125,6 +128,13 @@ def scrape(
                 seen_job_ids.add(job.job_id)
                 new_jobs.append(job)
 
+            if max_jobs is not None:
+                remaining = max_jobs - len(jobs)
+                if remaining <= 0:
+                    break
+                if len(new_jobs) > remaining:
+                    new_jobs = new_jobs[:remaining]
+
             if detail_executor is not None and new_jobs:
                 if session_pool is not None:
                     pending_detail_futures.extend(
@@ -167,6 +177,8 @@ def scrape(
 
             if not page_jobs:
                 break
+            if max_jobs is not None and len(jobs) >= max_jobs:
+                break
             if max_pages is not None and page_number >= max_pages:
                 break
             if last_page is not None and page_number >= last_page:
@@ -186,6 +198,8 @@ def scrape(
             if owns_session:
                 session.close()
 
+    if max_jobs is not None:
+        jobs = jobs[:max_jobs]
     if progress is not None:
         progress(f"done • {len(jobs)} jobs")
     return jobs

@@ -22,11 +22,12 @@ class _ProgressReporter:
             return self._message
 
 
-def _format_scrape_mode(max_pages: int | None, fetch_details: bool, delay: float) -> str:
+def _format_scrape_mode(max_pages: int | None, fetch_details: bool, delay: float, max_jobs: int | None = None) -> str:
     pages_text = "all available pages" if max_pages is None else f"up to {max_pages} page{'s' if max_pages != 1 else ''}"
     detail_text = "detail enrichment on" if fetch_details else "detail enrichment off"
     delay_text = f"{delay:.2f}s delay" if delay else "no delay"
-    return f"{pages_text}, {detail_text}, {delay_text}"
+    jobs_text = f", cap {max_jobs} jobs" if max_jobs is not None else ""
+    return f"{pages_text}, {detail_text}, {delay_text}{jobs_text}"
 
 
 def _format_progress_suffix(message: str) -> str:
@@ -73,12 +74,13 @@ def run_scraper_with_progress(
     max_pages: int | None,
     fetch_details: bool,
     delay: float,
+    max_jobs: int | None = None,
 ):
     stream = sys.stderr
     is_tty = stream.isatty()
     start = time.perf_counter()
     reporter = _ProgressReporter()
-    print(f"[{source}] starting scrape ({_format_scrape_mode(max_pages, fetch_details, delay)})", file=stream, flush=True)
+    print(f"[{source}] starting scrape ({_format_scrape_mode(max_pages, fetch_details, delay, max_jobs)})", file=stream, flush=True)
 
     stop_event = threading.Event()
     loader_thread = threading.Thread(
@@ -89,7 +91,13 @@ def run_scraper_with_progress(
     loader_thread.start()
 
     try:
-        return scraper(max_pages=max_pages, fetch_details=fetch_details, delay=delay, progress=reporter)
+        return scraper(
+            max_pages=max_pages,
+            fetch_details=fetch_details,
+            delay=delay,
+            max_jobs=max_jobs,
+            progress=reporter,
+        )
     finally:
         stop_event.set()
         loader_thread.join()

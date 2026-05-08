@@ -80,9 +80,12 @@ def scrape(
     delay: float = 0.0,
     browser_name: str = DEFAULT_BROWSER_NAME,
     progress: Any | None = None,
+    max_jobs: int | None = None,
 ) -> list[Job]:
     if max_pages is not None and max_pages < 1:
         raise ValueError("max_pages must be at least 1")
+    if max_jobs is not None and max_jobs < 1:
+        raise ValueError("max_jobs must be at least 1")
     if delay < 0:
         raise ValueError("delay must be non-negative")
 
@@ -97,6 +100,7 @@ def scrape(
                     fetch_details=fetch_details,
                     delay=delay,
                     progress=progress,
+                    max_jobs=max_jobs,
                 )
             finally:
                 context.close()
@@ -111,6 +115,7 @@ def _scrape_with_context(
     fetch_details: bool,
     delay: float,
     progress: Any | None = None,
+    max_jobs: int | None = None,
 ) -> list[Job]:
     listing_page = context.new_page()
     detail_page: Page | None = None
@@ -154,6 +159,8 @@ def _scrape_with_context(
         page_job_urls = _extract_job_urls(snapshot["html"])
         page_jobs: list[Job] = []
         for item in raw_jobs:
+            if max_jobs is not None and len(jobs) + len(page_jobs) >= max_jobs:
+                break
             if not isinstance(item, dict):
                 continue
             job = _parse_job_record(item, job_urls=page_job_urls, scraped_at=scraped_at)
@@ -179,12 +186,16 @@ def _scrape_with_context(
             page_text = f"page {page_number}/{max_pages}" if max_pages is not None else f"page {page_number}"
             progress(f"{page_text} • {len(page_jobs)} jobs")
 
+        if max_jobs is not None and len(jobs) >= max_jobs:
+            break
         if max_pages is not None and page_number >= max_pages:
             break
         if not bool(page_data.get("hasMore")):
             break
         page_number += 1
 
+    if max_jobs is not None:
+        jobs = jobs[:max_jobs]
     if progress is not None:
         progress(f"done • {len(jobs)} jobs")
     return jobs
