@@ -77,6 +77,8 @@ def scrape(
     owns_session = session is None
     session = session or build_session()
     try:
+        if progress is not None:
+            progress("loading page 1")
         html = fetch_listing_page(session)
         next_data = extract_next_data(html)
         query_params, first_page = _extract_listing_query(next_data)
@@ -111,6 +113,8 @@ def scrape(
             for page in range(2, last_page + 1):
                 if delay:
                     time.sleep(delay)
+                if progress is not None:
+                    progress(f"loading page {page}/{last_page}")
                 try:
                     page_payload = _fetch_api_page(session, page=page, query_params=query_params, app_version=app_version)
                 except requests.HTTPError as exc:

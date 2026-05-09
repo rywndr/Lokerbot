@@ -69,7 +69,10 @@ def scrape(
             break
 
         if progress is not None:
-            progress(f"loading page {page_num}")
+            if total_pages_available is not None:
+                progress(f"loading page {page_num}/{total_pages_available}")
+            else:
+                progress(f"loading page {page_num}")
 
         try:
             response_data = _fetch_vacancies_page(
@@ -82,11 +85,14 @@ def scrape(
                 raise ValueError(
                     f"Failed to fetch first page from KitaLulus API: {e}"
                 ) from e
-            print(
-                f"Warning: Failed to fetch page {page_num}, stopping pagination: {e}",
-                file=sys.stderr,
-                flush=True,
-            )
+            if progress is not None:
+                progress(f"warning: failed page {page_num}, stopping")
+            else:
+                print(
+                    f"Warning: Failed to fetch page {page_num}, stopping pagination: {e}",
+                    file=sys.stderr,
+                    flush=True,
+                )
             break
 
         list_items = response_data.get("list") or []
@@ -95,11 +101,14 @@ def scrape(
             elements = response_data.get("elements", 0)
             if elements > 0 and per_page_count > 0:
                 total_pages_available = (elements + per_page_count - 1) // per_page_count
-                print(
-                    f"Found {elements} jobs across ~{total_pages_available} pages on KitaLulus",
-                    file=sys.stderr,
-                    flush=True,
-                )
+                if progress is not None:
+                    progress(f"found {elements} jobs (~{total_pages_available} pages)")
+                else:
+                    print(
+                        f"Found {elements} jobs across ~{total_pages_available} pages on KitaLulus",
+                        file=sys.stderr,
+                        flush=True,
+                    )
 
         page_jobs = _parse_and_filter_jobs(
             vacancies_list=list_items,
@@ -126,11 +135,14 @@ def scrape(
             progress(f"page {page_num}/{total_text} • {len(new_jobs)} jobs")
 
         if not page_jobs:
-            print(
-                f"No recent jobs found on page {page_num}, stopping pagination",
-                file=sys.stderr,
-                flush=True,
-            )
+            if progress is not None:
+                progress(f"no recent jobs on page {page_num}, stopping")
+            else:
+                print(
+                    f"No recent jobs found on page {page_num}, stopping pagination",
+                    file=sys.stderr,
+                    flush=True,
+                )
             break
 
         if fetch_details:
@@ -140,11 +152,14 @@ def scrape(
                     if delay > 0:
                         time.sleep(delay)
                 except Exception as e:
-                    print(
-                        f"Warning: Failed to enrich job {job.job_id} ({job.title}): {e}",
-                        file=sys.stderr,
-                        flush=True,
-                    )
+                    if progress is not None:
+                        progress(f"warning: failed to enrich {job.job_id}")
+                    else:
+                        print(
+                            f"Warning: Failed to enrich job {job.job_id} ({job.title}): {e}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
 
         all_jobs.extend(new_jobs)
 
@@ -153,11 +168,14 @@ def scrape(
 
         has_next = response_data.get("hasNextPage", False)
         if not has_next:
-            print(
-                f"Reached last page at page {page_num}",
-                file=sys.stderr,
-                flush=True,
-            )
+            if progress is not None:
+                progress(f"page {page_num}: last page")
+            else:
+                print(
+                    f"Reached last page at page {page_num}",
+                    file=sys.stderr,
+                    flush=True,
+                )
             break
 
         page_num += 1

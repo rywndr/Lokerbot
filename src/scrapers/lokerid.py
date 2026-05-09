@@ -107,8 +107,11 @@ def scrape(
                 elif last_page is not None:
                     total_text = last_page
                 else:
-                    total_text = "?"
-                progress(f"loading page {page_number}/{total_text}")
+                    total_text = None
+                if total_text is not None:
+                    progress(f"loading page {page_number}/{total_text}")
+                else:
+                    progress(f"loading page {page_number}")
 
             response = session.get(_build_listing_url(page_number), timeout=30)
             response.raise_for_status()
@@ -172,8 +175,11 @@ def scrape(
                 elif last_page is not None:
                     total_text = last_page
                 else:
-                    total_text = "?"
-                progress(f"page {page_number}/{total_text} • {len(jobs)} jobs")
+                    total_text = None
+                if total_text is not None:
+                    progress(f"page {page_number}/{total_text} • {len(jobs)} jobs")
+                else:
+                    progress(f"page {page_number} • {len(jobs)} jobs")
 
             if not page_jobs:
                 break
