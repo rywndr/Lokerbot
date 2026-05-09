@@ -7,8 +7,8 @@ from unittest.mock import Mock, call, patch
 
 import requests
 
-from lokerbot.nextjs import extract_next_data
-from lokerbot.scrapers.dealls import _parse_and_optionally_enrich, fetch_listing_page, parse_jobs, scrape
+from src.nextjs import extract_next_data
+from src.scrapers.dealls import _parse_and_optionally_enrich, fetch_listing_page, parse_jobs, scrape
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "dealls_listing.html"
 FIXTURE_SCRAPED_AT = "2026-03-16T12:00:00Z"
@@ -105,12 +105,12 @@ class DeallsScrapeTests(unittest.TestCase):
         third_page = {"docs": []}
 
         with (
-            patch("lokerbot.scrapers.dealls.fetch_listing_page", return_value="<html>"),
-            patch("lokerbot.scrapers.dealls.extract_next_data", return_value={"runtimeConfig": {"version": "web-123"}}),
-            patch("lokerbot.scrapers.dealls._extract_listing_query", return_value=(query_params, first_page)),
-            patch("lokerbot.scrapers.dealls._parse_and_optionally_enrich", side_effect=[["page-1-job"], ["page-2-job"], ["page-3-job"]]) as parse_mock,
-            patch("lokerbot.scrapers.dealls._fetch_api_page", side_effect=[second_page, third_page]) as fetch_api_page_mock,
-            patch("lokerbot.scrapers.dealls.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
+            patch("src.scrapers.dealls.fetch_listing_page", return_value="<html>"),
+            patch("src.scrapers.dealls.extract_next_data", return_value={"runtimeConfig": {"version": "web-123"}}),
+            patch("src.scrapers.dealls._extract_listing_query", return_value=(query_params, first_page)),
+            patch("src.scrapers.dealls._parse_and_optionally_enrich", side_effect=[["page-1-job"], ["page-2-job"], ["page-3-job"]]) as parse_mock,
+            patch("src.scrapers.dealls._fetch_api_page", side_effect=[second_page, third_page]) as fetch_api_page_mock,
+            patch("src.scrapers.dealls.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
         ):
             jobs = scrape(max_pages=None, fetch_details=False, delay=0.0, session=session)
 
@@ -154,12 +154,12 @@ class DeallsScrapeTests(unittest.TestCase):
         first_page = {"docs": [], "totalPages": 1}
 
         with (
-            patch("lokerbot.scrapers.dealls.fetch_listing_page", return_value="<html>"),
-            patch("lokerbot.scrapers.dealls.extract_next_data", return_value={"runtimeConfig": {"version": "web-123"}}),
-            patch("lokerbot.scrapers.dealls._extract_listing_query", return_value=({}, first_page)),
-            patch("lokerbot.scrapers.dealls._parse_and_optionally_enrich", return_value=["page-1-job"]) as parse_mock,
-            patch("lokerbot.scrapers.dealls._fetch_api_page") as fetch_api_page_mock,
-            patch("lokerbot.scrapers.dealls.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
+            patch("src.scrapers.dealls.fetch_listing_page", return_value="<html>"),
+            patch("src.scrapers.dealls.extract_next_data", return_value={"runtimeConfig": {"version": "web-123"}}),
+            patch("src.scrapers.dealls._extract_listing_query", return_value=({}, first_page)),
+            patch("src.scrapers.dealls._parse_and_optionally_enrich", return_value=["page-1-job"]) as parse_mock,
+            patch("src.scrapers.dealls._fetch_api_page") as fetch_api_page_mock,
+            patch("src.scrapers.dealls.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
         ):
             jobs = scrape(max_pages=None, fetch_details=False, delay=0.0, session=session)
 
@@ -178,12 +178,12 @@ class DeallsScrapeTests(unittest.TestCase):
         first_page = {"docs": []}
 
         with (
-            patch("lokerbot.scrapers.dealls.fetch_listing_page", return_value="<html>"),
-            patch("lokerbot.scrapers.dealls.extract_next_data", return_value={"runtimeConfig": {"version": "web-123"}}),
-            patch("lokerbot.scrapers.dealls._extract_listing_query", return_value=({}, first_page)),
-            patch("lokerbot.scrapers.dealls._parse_and_optionally_enrich", return_value=["page-1-job"]),
-            patch("lokerbot.scrapers.dealls._fetch_api_page") as fetch_api_page_mock,
-            patch("lokerbot.scrapers.dealls.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
+            patch("src.scrapers.dealls.fetch_listing_page", return_value="<html>"),
+            patch("src.scrapers.dealls.extract_next_data", return_value={"runtimeConfig": {"version": "web-123"}}),
+            patch("src.scrapers.dealls._extract_listing_query", return_value=({}, first_page)),
+            patch("src.scrapers.dealls._parse_and_optionally_enrich", return_value=["page-1-job"]),
+            patch("src.scrapers.dealls._fetch_api_page") as fetch_api_page_mock,
+            patch("src.scrapers.dealls.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
         ):
             with self.assertWarnsRegex(RuntimeWarning, "valid totalPages value"):
                 jobs = scrape(max_pages=None, fetch_details=False, delay=0.0, session=session)
@@ -199,12 +199,12 @@ class DeallsScrapeTests(unittest.TestCase):
         page_error = requests.HTTPError("bad request", response=Mock(status_code=400))
 
         with (
-            patch("lokerbot.scrapers.dealls.fetch_listing_page", return_value="<html>"),
-            patch("lokerbot.scrapers.dealls.extract_next_data", return_value={"runtimeConfig": {"version": "web-123"}}),
-            patch("lokerbot.scrapers.dealls._extract_listing_query", return_value=(query_params, first_page)),
-            patch("lokerbot.scrapers.dealls._parse_and_optionally_enrich", side_effect=[["page-1-job"], ["page-2-job"]]) as parse_mock,
-            patch("lokerbot.scrapers.dealls._fetch_api_page", side_effect=[second_page, page_error]) as fetch_api_page_mock,
-            patch("lokerbot.scrapers.dealls.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
+            patch("src.scrapers.dealls.fetch_listing_page", return_value="<html>"),
+            patch("src.scrapers.dealls.extract_next_data", return_value={"runtimeConfig": {"version": "web-123"}}),
+            patch("src.scrapers.dealls._extract_listing_query", return_value=(query_params, first_page)),
+            patch("src.scrapers.dealls._parse_and_optionally_enrich", side_effect=[["page-1-job"], ["page-2-job"]]) as parse_mock,
+            patch("src.scrapers.dealls._fetch_api_page", side_effect=[second_page, page_error]) as fetch_api_page_mock,
+            patch("src.scrapers.dealls.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
         ):
             with self.assertWarnsRegex(RuntimeWarning, "page 3 was rejected, so pagination stopped at page 2"):
                 jobs = scrape(max_pages=None, fetch_details=False, delay=0.0, session=session)
@@ -266,10 +266,10 @@ class DeallsScrapeTests(unittest.TestCase):
         }
 
         with (
-            patch("lokerbot.scrapers.dealls.fetch_listing_page", return_value="<html>"),
-            patch("lokerbot.scrapers.dealls.extract_next_data", return_value={"runtimeConfig": {"version": "web-123"}}),
-            patch("lokerbot.scrapers.dealls._extract_listing_query", return_value=({}, first_page)),
-            patch("lokerbot.scrapers.dealls.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
+            patch("src.scrapers.dealls.fetch_listing_page", return_value="<html>"),
+            patch("src.scrapers.dealls.extract_next_data", return_value={"runtimeConfig": {"version": "web-123"}}),
+            patch("src.scrapers.dealls._extract_listing_query", return_value=({}, first_page)),
+            patch("src.scrapers.dealls.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
         ):
             jobs = scrape(max_pages=1, fetch_details=False, delay=0.0, session=session)
 

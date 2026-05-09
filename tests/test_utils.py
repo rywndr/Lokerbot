@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import unittest
 
-from lokerbot.utils import (
+from src.utils import (
     clean_string,
     dedupe_list,
     humanize_label,

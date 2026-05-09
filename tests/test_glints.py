@@ -6,8 +6,8 @@ from pathlib import Path
 import unittest
 from unittest.mock import Mock, call, patch
 
-from lokerbot.nextjs import extract_next_data
-from lokerbot.scrapers.glints import (
+from src.nextjs import extract_next_data
+from src.scrapers.glints import (
     LOGIN_GATE_TEXT,
     _extract_job_urls,
     _scrape_with_context,
@@ -244,10 +244,10 @@ class GlintsScrapeTests(unittest.TestCase):
 
         with (
             patch(
-                "lokerbot.scrapers.glints._fetch_listing_snapshot",
+                "src.scrapers.glints._fetch_listing_snapshot",
                 return_value={"html": first_page_html, "body_text": ""},
             ),
-            patch("lokerbot.scrapers.glints.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
+            patch("src.scrapers.glints.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
         ):
             jobs = _scrape_with_context(context, max_pages=1, fetch_details=False, delay=0.0)
 
@@ -262,13 +262,13 @@ class GlintsScrapeTests(unittest.TestCase):
 
         with (
             patch(
-                "lokerbot.scrapers.glints._fetch_listing_snapshot",
+                "src.scrapers.glints._fetch_listing_snapshot",
                 side_effect=[
                     {"html": first_page_html, "body_text": ""},
                     {"html": second_page_html, "body_text": ""},
                 ],
             ) as fetch_listing_snapshot_mock,
-            patch("lokerbot.scrapers.glints.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
+            patch("src.scrapers.glints.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
         ):
             jobs = _scrape_with_context(context, max_pages=2, fetch_details=False, delay=0.0)
 
@@ -287,13 +287,13 @@ class GlintsScrapeTests(unittest.TestCase):
 
         with (
             patch(
-                "lokerbot.scrapers.glints._fetch_listing_snapshot",
+                "src.scrapers.glints._fetch_listing_snapshot",
                 side_effect=[
                     {"html": first_page_html, "body_text": ""},
                     {"html": second_page_html, "body_text": f"{LOGIN_GATE_TEXT}\nDaftar"},
                 ],
             ),
-            patch("lokerbot.scrapers.glints.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
+            patch("src.scrapers.glints.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
         ):
             with self.assertWarnsRegex(RuntimeWarning, "login prompt"):
                 jobs = _scrape_with_context(context, max_pages=None, fetch_details=False, delay=0.0)
@@ -329,11 +329,11 @@ class GlintsScrapeTests(unittest.TestCase):
 
         with (
             patch(
-                "lokerbot.scrapers.glints._fetch_listing_snapshot",
+                "src.scrapers.glints._fetch_listing_snapshot",
                 return_value={"html": listing_html, "body_text": ""},
             ),
-            patch("lokerbot.scrapers.glints._fetch_detail_page_html", return_value=detail_html),
-            patch("lokerbot.scrapers.glints.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
+            patch("src.scrapers.glints._fetch_detail_page_html", return_value=detail_html),
+            patch("src.scrapers.glints.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
         ):
             jobs = _scrape_with_context(context, max_pages=1, fetch_details=False, delay=0.0)
 
@@ -367,11 +367,11 @@ class GlintsScrapeTests(unittest.TestCase):
 
         with (
             patch(
-                "lokerbot.scrapers.glints._fetch_listing_snapshot",
+                "src.scrapers.glints._fetch_listing_snapshot",
                 return_value={"html": listing_html, "body_text": ""},
             ),
-            patch("lokerbot.scrapers.glints._fetch_detail_page_html", return_value=detail_html),
-            patch("lokerbot.scrapers.glints.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
+            patch("src.scrapers.glints._fetch_detail_page_html", return_value=detail_html),
+            patch("src.scrapers.glints.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
         ):
             jobs = _scrape_with_context(context, max_pages=1, fetch_details=True, delay=0.0)
 

@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, call, patch
 
-from lokerbot.models import Job
-from lokerbot.scrapers.lokerid import LOKERID_LISTING_URL, parse_jobs, parse_listing_html, scrape
+from src.models import Job
+from src.scrapers.lokerid import LOKERID_LISTING_URL, parse_jobs, parse_listing_html, scrape
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 API_FIXTURE_PATH = FIXTURE_DIR / "lokerid_api_response.json"
@@ -364,13 +364,13 @@ class LokeridScrapeTests(unittest.TestCase):
 
         with (
             patch(
-                "lokerbot.scrapers.lokerid._parse_listing_html",
+                "src.scrapers.lokerid._parse_listing_html",
                 side_effect=[
                     (page1_jobs, {"current_page": 1, "last_page": 2}),
                     (page2_jobs, {"current_page": 2, "last_page": 2}),
                 ],
             ),
-            patch("lokerbot.scrapers.lokerid.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
+            patch("src.scrapers.lokerid.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
         ):
             jobs = scrape(max_pages=None, fetch_details=False, delay=0.0, session=session)
 
@@ -392,7 +392,7 @@ class LokeridScrapeTests(unittest.TestCase):
         session = Mock()
         session.get.return_value = _response_with_text(self.listing_html)
 
-        with patch("lokerbot.scrapers.lokerid.utc_now_iso", return_value=FIXTURE_SCRAPED_AT):
+        with patch("src.scrapers.lokerid.utc_now_iso", return_value=FIXTURE_SCRAPED_AT):
             jobs = scrape(max_pages=1, fetch_details=False, delay=0.0, session=session)
 
         self.assertEqual([job.job_id for job in jobs], ["1001", "1002"])
@@ -430,10 +430,10 @@ class LokeridScrapeTests(unittest.TestCase):
 
         with (
             patch(
-                "lokerbot.scrapers.lokerid._parse_listing_html",
+                "src.scrapers.lokerid._parse_listing_html",
                 return_value=([incomplete_job], {"current_page": 1, "last_page": 1}),
             ),
-            patch("lokerbot.scrapers.lokerid.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
+            patch("src.scrapers.lokerid.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
         ):
             jobs = scrape(max_pages=1, fetch_details=False, delay=0.0, session=session)
 
@@ -472,10 +472,10 @@ class LokeridScrapeTests(unittest.TestCase):
 
         with (
             patch(
-                "lokerbot.scrapers.lokerid._parse_listing_html",
+                "src.scrapers.lokerid._parse_listing_html",
                 return_value=([incomplete_job], {"current_page": 1, "last_page": 1}),
             ),
-            patch("lokerbot.scrapers.lokerid.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
+            patch("src.scrapers.lokerid.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
         ):
             jobs = scrape(max_pages=1, fetch_details=True, delay=0.0, session=session)
 
@@ -539,13 +539,13 @@ class LokeridScrapeTests(unittest.TestCase):
 
         with (
             patch(
-                "lokerbot.scrapers.lokerid._parse_listing_html",
+                "src.scrapers.lokerid._parse_listing_html",
                 side_effect=[
                     ([page1_job], {"current_page": 1, "last_page": 2}),
                     ([page2_job], {"current_page": 2, "last_page": 2}),
                 ],
             ),
-            patch("lokerbot.scrapers.lokerid.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
+            patch("src.scrapers.lokerid.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
         ):
             with ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(

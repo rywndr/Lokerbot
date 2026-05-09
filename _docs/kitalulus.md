@@ -20,8 +20,8 @@ KitaLulus is a hybrid scraper. It boots a headless Firefox once to capture a liv
 - Playwright Firefox is required (already shared with the Glints and Loker.id scrapers)
 
 ## Relevant code
-- `lokerbot/scrapers/kitalulus.py`
-- `lokerbot/scrapers/glints.py`
-- `lokerbot/http_client.py`
-- `lokerbot/utils.py`
-- `lokerbot/models.py`
+- `src/scrapers/kitalulus.py`
+- `src/scrapers/glints.py`
+- `src/http_client.py`
+- `src/utils.py`
+- `src/models.py`

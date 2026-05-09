@@ -17,7 +17,7 @@ Glints uses Playwright to load the public listings page, read the client-rendere
 - `--all-pages` can still stop before the end of the listing set if Glints starts showing a login prompt on follow-up pages
 
 ## Relevant code
-- `lokerbot/scrapers/glints.py`
-- `lokerbot/nextjs.py`
-- `lokerbot/utils.py`
-- `lokerbot/models.py`
+- `src/scrapers/glints.py`
+- `src/nextjs.py`
+- `src/utils.py`
+- `src/models.py`

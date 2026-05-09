@@ -8,9 +8,9 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 
-from lokerbot.cli_progress import run_scraper_with_progress
-from lokerbot.models import Job
-from lokerbot.scrapers import DEFAULT_SOURCE, SCRAPERS
+from src.cli_progress import run_scraper_with_progress
+from src.models import Job
+from src.scrapers import DEFAULT_SOURCE, SCRAPERS
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

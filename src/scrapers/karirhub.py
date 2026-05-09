@@ -10,9 +10,9 @@ from typing import Any
 import requests
 from bs4 import BeautifulSoup
 
-from lokerbot.http_client import SessionPool, build_session
-from lokerbot.models import Job, utc_now_iso
-from lokerbot.utils import (
+from src.http_client import SessionPool, build_session
+from src.models import Job, utc_now_iso
+from src.utils import (
     clean_string as _clean_string,
     dedupe_list as _dedupe_list,
     is_recent_job_post as _is_recent_job_post,

@@ -10,8 +10,8 @@ from unittest.mock import Mock, call
 
 from bs4 import BeautifulSoup
 
-from lokerbot.models import Job
-from lokerbot.scrapers.karirhub import (
+from src.models import Job
+from src.scrapers.karirhub import (
     KARIRHUB_LISTING_API_URL,
     KARIRHUB_LISTING_URL,
     LISTING_PAGE_SIZE,

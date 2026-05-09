@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import unittest
 
-from lokerbot.nextjs import extract_next_data
+from src.nextjs import extract_next_data
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "dealls_listing.html"
 

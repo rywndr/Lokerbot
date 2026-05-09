@@ -9,8 +9,8 @@ import unittest
 from unittest.mock import ANY, Mock, patch
 
 import main
-from lokerbot.models import Job
-from lokerbot.scrapers import DEFAULT_SOURCE
+from src.models import Job
+from src.scrapers import DEFAULT_SOURCE
 
 
 def build_job(job_id: str = "job-1", source: str = "") -> Job:

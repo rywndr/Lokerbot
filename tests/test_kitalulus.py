@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from lokerbot.models import Job
-from lokerbot.scrapers.kitalulus import (
+from src.models import Job
+from src.scrapers.kitalulus import (
     _bump_page,
     _collect_tags,
     _extract_description,
@@ -221,14 +221,14 @@ class KitaLulusScrapeTests(unittest.TestCase):
         for vacancy in self.api_response["data"]["vacanciesV3"]["list"]:
             vacancy["updatedAt"] = recent_us_timestamp
         bootstrap_patcher = patch(
-            "lokerbot.scrapers.kitalulus._bootstrap_request_template",
+            "src.scrapers.kitalulus._bootstrap_request_template",
             return_value=_FAKE_REQUEST_TEMPLATE,
         )
         self.mock_bootstrap = bootstrap_patcher.start()
         self.addCleanup(bootstrap_patcher.stop)
 
-    @patch("lokerbot.scrapers.kitalulus._build_session")
-    @patch("lokerbot.scrapers.kitalulus._fetch_vacancies_page")
+    @patch("src.scrapers.kitalulus._build_session")
+    @patch("src.scrapers.kitalulus._fetch_vacancies_page")
     def test_scrape_single_page(self, mock_fetch, mock_build_session):
         mock_session = MagicMock()
         mock_build_session.return_value = mock_session
@@ -239,8 +239,8 @@ class KitaLulusScrapeTests(unittest.TestCase):
         self.assertTrue(all(isinstance(job, Job) for job in jobs))
         mock_fetch.assert_called_once()
 
-    @patch("lokerbot.scrapers.kitalulus._build_session")
-    @patch("lokerbot.scrapers.kitalulus._fetch_vacancies_page")
+    @patch("src.scrapers.kitalulus._build_session")
+    @patch("src.scrapers.kitalulus._fetch_vacancies_page")
     def test_scrape_multiple_pages(self, mock_fetch, mock_build_session):
         mock_session = MagicMock()
         mock_build_session.return_value = mock_session
@@ -254,8 +254,8 @@ class KitaLulusScrapeTests(unittest.TestCase):
         self.assertGreater(len(jobs), 0)
         self.assertEqual(mock_fetch.call_count, 2)
 
-    @patch("lokerbot.scrapers.kitalulus._build_session")
-    @patch("lokerbot.scrapers.kitalulus._fetch_vacancies_page")
+    @patch("src.scrapers.kitalulus._build_session")
+    @patch("src.scrapers.kitalulus._fetch_vacancies_page")
     def test_scrape_stops_when_no_recent_jobs(self, mock_fetch, mock_build_session):
         mock_session = MagicMock()
         mock_build_session.return_value = mock_session
@@ -270,8 +270,8 @@ class KitaLulusScrapeTests(unittest.TestCase):
         self.assertEqual(len(jobs), 0)
         mock_fetch.assert_called_once()
 
-    @patch("lokerbot.scrapers.kitalulus._build_session")
-    @patch("lokerbot.scrapers.kitalulus._fetch_vacancies_page")
+    @patch("src.scrapers.kitalulus._build_session")
+    @patch("src.scrapers.kitalulus._fetch_vacancies_page")
     def test_scrape_handles_api_error_on_first_page(
         self, mock_fetch, mock_build_session
     ):
@@ -282,8 +282,8 @@ class KitaLulusScrapeTests(unittest.TestCase):
             scrape(max_pages=1, session=mock_session)
         self.assertIn("Failed to fetch first page", str(context.exception))
 
-    @patch("lokerbot.scrapers.kitalulus._build_session")
-    @patch("lokerbot.scrapers.kitalulus._fetch_vacancies_page")
+    @patch("src.scrapers.kitalulus._build_session")
+    @patch("src.scrapers.kitalulus._fetch_vacancies_page")
     def test_scrape_handles_api_error_on_subsequent_page(
         self, mock_fetch, mock_build_session
     ):
@@ -296,9 +296,9 @@ class KitaLulusScrapeTests(unittest.TestCase):
         self.assertGreater(len(jobs), 0)
         self.assertEqual(mock_fetch.call_count, 2)
 
-    @patch("lokerbot.scrapers.kitalulus._parse_and_filter_jobs")
-    @patch("lokerbot.scrapers.kitalulus._build_session")
-    @patch("lokerbot.scrapers.kitalulus._fetch_vacancies_page")
+    @patch("src.scrapers.kitalulus._parse_and_filter_jobs")
+    @patch("src.scrapers.kitalulus._build_session")
+    @patch("src.scrapers.kitalulus._fetch_vacancies_page")
     def test_scrape_bumps_page_between_calls(
         self, mock_fetch, mock_build_session, mock_parse
     ):
@@ -316,8 +316,8 @@ class KitaLulusScrapeTests(unittest.TestCase):
         page_args = [call.kwargs.get("page") for call in mock_fetch.call_args_list]
         self.assertEqual(page_args, [1, 2, 3])
 
-    @patch("lokerbot.scrapers.kitalulus._parse_and_filter_jobs")
-    @patch("lokerbot.scrapers.kitalulus._fetch_vacancies_page")
+    @patch("src.scrapers.kitalulus._parse_and_filter_jobs")
+    @patch("src.scrapers.kitalulus._fetch_vacancies_page")
     def test_scrape_runs_bootstrap_once(self, mock_fetch, mock_parse):
         mock_fetch.return_value = {"list": [], "hasNextPage": False}
         mock_parse.return_value = [MagicMock(spec=Job)]
@@ -455,7 +455,7 @@ class KitaLulusRequestTemplateTests(unittest.TestCase):
 
 class KitaLulusRelativeTimeTests(unittest.TestCase):
     def setUp(self):
-        from lokerbot.scrapers.kitalulus import _parse_indonesian_relative_time
+        from src.scrapers.kitalulus import _parse_indonesian_relative_time
         self.parse = _parse_indonesian_relative_time
         self.now = datetime(2026, 5, 7, 12, 0, 0, tzinfo=timezone.utc)
 

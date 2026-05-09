@@ -7,10 +7,10 @@ from urllib.parse import quote
 
 import requests
 
-from lokerbot.http_client import build_session
-from lokerbot.models import Job, utc_now_iso
-from lokerbot.nextjs import extract_next_data
-from lokerbot.utils import (
+from src.http_client import build_session
+from src.models import Job, utc_now_iso
+from src.nextjs import extract_next_data
+from src.utils import (
     clean_string as _clean_string,
     dedupe_list as _dedupe_list,
     humanize_label as _humanize_label,

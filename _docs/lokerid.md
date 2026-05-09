@@ -14,8 +14,8 @@ Loker.id is an HTTP-based scraper that fetches the public listings page over `re
 8. Drain any pending detail futures before returning
 
 ## Performance
-- Listing and detail pages are fetched with `requests.Session` (built via `lokerbot.http_client.build_session`); no headless browser is involved
-- Detail enrichment runs on a `ThreadPoolExecutor` with `DETAIL_WORKER_COUNT=10` workers backed by a shared `SessionPool` (also from `lokerbot.http_client`), so up to 10 detail requests run concurrently
+- Listing and detail pages are fetched with `requests.Session` (built via `src.http_client.build_session`); no headless browser is involved
+- Detail enrichment runs on a `ThreadPoolExecutor` with `DETAIL_WORKER_COUNT=10` workers backed by a shared `SessionPool` (also from `src.http_client`), so up to 10 detail requests run concurrently
 - Futures are submitted page-by-page and drained in batches of `5 * LISTING_PAGE_SIZE` to bound memory; remaining futures are drained in `finally`
 - The previous Playwright-based implementation routinely took >5 minutes for 6 pages with details because every detail page was loaded sequentially with `wait_until="networkidle"`; the HTTP-based version finishes the same workload in tens of seconds
 
@@ -27,7 +27,7 @@ Loker.id is an HTTP-based scraper that fetches the public listings page over `re
 - A caller-supplied `session=` kwarg disables the internal `SessionPool` and routes all detail fetches through the supplied session, which makes the scraper trivially mockable in tests
 
 ## Relevant code
-- `lokerbot/scrapers/lokerid.py`
-- `lokerbot/http_client.py` (provides `build_session` and `SessionPool`)
-- `lokerbot/utils.py`
-- `lokerbot/models.py`
+- `src/scrapers/lokerid.py`
+- `src/http_client.py` (provides `build_session` and `SessionPool`)
+- `src/utils.py`
+- `src/models.py`

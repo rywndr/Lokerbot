@@ -17,7 +17,7 @@ Dealls is a Next.js-based scraper that reads the public listings page, extracts 
 - The scraper keeps the shared Dealls output shape aligned with the repo’s `Job` model
 
 ## Relevant code
-- `lokerbot/scrapers/dealls.py`
-- `lokerbot/nextjs.py`
-- `lokerbot/utils.py`
-- `lokerbot/models.py`
+- `src/scrapers/dealls.py`
+- `src/nextjs.py`
+- `src/utils.py`
+- `src/models.py`

@@ -10,9 +10,9 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from playwright.sync_api import Page, Playwright, sync_playwright
 
-from lokerbot.models import Job, utc_now_iso
-from lokerbot.nextjs import extract_next_data
-from lokerbot.utils import (
+from src.models import Job, utc_now_iso
+from src.nextjs import extract_next_data
+from src.utils import (
     clean_string as _clean_string,
     dedupe_list as _dedupe,
     humanize_label as _humanize_label,

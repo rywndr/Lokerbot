@@ -11,9 +11,9 @@ from typing import Any
 
 import requests
 
-from lokerbot.http_client import build_session as _build_session
-from lokerbot.models import Job
-from lokerbot.utils import (
+from src.http_client import build_session as _build_session
+from src.models import Job
+from src.utils import (
     clean_string as _clean_string,
     dedupe_list as _dedupe_list,
     humanize_label as _humanize_label,

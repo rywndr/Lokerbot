@@ -57,7 +57,7 @@ python main.py --all-sources --benchmark --max-jobs 25
 
 Single-source runs are written to `output/<source>/<source>_<timestamp>.json`. `--all-sources` runs are merged into a single combined snapshot at `output/all/all_<timestamp>.json`; the per-record `source` field is what downstream consumers use to filter by board.
 
-Each saved record follows the shared `Job` model in `lokerbot/models.py` and includes:
+Each saved record follows the shared `Job` model in `src/models.py` and includes:
 
 - `job_id`
 - `title`
@@ -88,7 +88,7 @@ All scraper implementations only include listings whose `posted_at` falls betwee
 
 ## Shared helpers
 
-- `lokerbot/nextjs.py` for generic `__NEXT_DATA__` extraction
-- `lokerbot/utils.py` for shared string normalization, description normalization, ISO datetime parsing, 30-day recency filtering, and stable list deduplication helpers
-- `lokerbot/http_client.py` for the shared HTTP session
-- `lokerbot/models.py` for the shared `Job` output model
+- `src/nextjs.py` for generic `__NEXT_DATA__` extraction
+- `src/utils.py` for shared string normalization, description normalization, ISO datetime parsing, 30-day recency filtering, and stable list deduplication helpers
+- `src/http_client.py` for the shared HTTP session
+- `src/models.py` for the shared `Job` output model

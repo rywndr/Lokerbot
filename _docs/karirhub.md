@@ -20,7 +20,7 @@ Karirhub is a requests-driven scraper that paginates the public listing API dire
 - Detail URLs are slugified from the job title; `/` characters are replaced with `-` and runs of `-` are collapsed so titles like "Chef/Cook" no longer leak the slash into the URL path and 404 the detail fetch
 
 ## Relevant code
-- `lokerbot/scrapers/karirhub.py`
-- `lokerbot/utils.py`
-- `lokerbot/http_client.py`
-- `lokerbot/models.py`
+- `src/scrapers/karirhub.py`
+- `src/utils.py`
+- `src/http_client.py`
+- `src/models.py`
