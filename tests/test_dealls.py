@@ -191,12 +191,15 @@ class DeallsScrapeTests(unittest.TestCase):
         self.assertEqual(jobs, ["page-1-job"])
         fetch_api_page_mock.assert_not_called()
 
-    def test_scrape_all_pages_warns_and_stops_when_later_page_is_rejected(self) -> None:
+    def test_scrape_all_pages_stops_quietly_when_later_page_is_rejected(self) -> None:
         session = Mock()
+        progress = Mock()
         query_params = {"pageSize": 20}
         first_page = {"docs": [], "totalPages": 3}
         second_page = {"docs": []}
         page_error = requests.HTTPError("bad request", response=Mock(status_code=400))
+
+        import warnings as _warnings
 
         with (
             patch("src.scrapers.dealls.fetch_listing_page", return_value="<html>"),
@@ -206,8 +209,15 @@ class DeallsScrapeTests(unittest.TestCase):
             patch("src.scrapers.dealls._fetch_api_page", side_effect=[second_page, page_error]) as fetch_api_page_mock,
             patch("src.scrapers.dealls.utc_now_iso", return_value=FIXTURE_SCRAPED_AT),
         ):
-            with self.assertWarnsRegex(RuntimeWarning, "page 3 was rejected, so pagination stopped at page 2"):
-                jobs = scrape(max_pages=None, fetch_details=False, delay=0.0, session=session)
+            with _warnings.catch_warnings(record=True) as caught:
+                _warnings.simplefilter("always")
+                jobs = scrape(
+                    max_pages=None,
+                    fetch_details=False,
+                    delay=0.0,
+                    session=session,
+                    progress=progress,
+                )
 
         self.assertEqual(jobs, ["page-1-job", "page-2-job"])
         self.assertEqual(parse_mock.call_count, 2)
@@ -217,6 +227,14 @@ class DeallsScrapeTests(unittest.TestCase):
                 call(session, page=2, query_params=query_params, app_version="web-123"),
                 call(session, page=3, query_params=query_params, app_version="web-123"),
             ],
+        )
+        self.assertFalse(
+            [w for w in caught if "was rejected" in str(w.message)],
+            "HTTP 400 termination should not emit a RuntimeWarning",
+        )
+        self.assertIn(
+            call("api exhausted at page 2/3 • 2 jobs"),
+            progress.call_args_list,
         )
 
     def test_parse_and_optionally_enrich_populates_plain_text_description(self) -> None:

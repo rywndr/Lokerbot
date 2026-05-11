@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import time
 import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from typing import Any
 from urllib.parse import quote
 
 import requests
 
-from src.http_client import build_session
+from src.http_client import SessionPool, build_session
 from src.models import Job, utc_now_iso
 from src.nextjs import extract_next_data
 from src.utils import (
@@ -26,6 +28,9 @@ LISTING_QUERY_KEY = "/v1/explore-job/job"
 HTML_ACCEPT_HEADER = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
+
+DETAIL_WORKER_COUNT = 10
+DETAIL_DRAIN_THRESHOLD = 90
 
 
 def fetch_listing_page(session: requests.Session | None = None) -> str:
@@ -76,7 +81,17 @@ def scrape(
 
     owns_session = session is None
     session = session or build_session()
+    use_parallel_details = owns_session and fetch_details
+
+    detail_executor: ThreadPoolExecutor | None = None
+    session_pool: SessionPool | None = None
+    pending_detail_futures: list[tuple[Job, Any]] = []
+
     try:
+        if use_parallel_details:
+            detail_executor = ThreadPoolExecutor(max_workers=DETAIL_WORKER_COUNT)
+            session_pool = SessionPool(size=DETAIL_WORKER_COUNT)
+
         if progress is not None:
             progress("loading page 1")
         html = fetch_listing_page(session)
@@ -84,13 +99,20 @@ def scrape(
         query_params, first_page = _extract_listing_query(next_data)
         app_version = str(next_data.get("runtimeConfig", {}).get("version") or "")
         scraped_at = utc_now_iso()
+        scraped_at_dt = _parse_iso_datetime(scraped_at)
+        if scraped_at_dt is None:
+            raise ValueError("scraped_at must be a valid ISO 8601 timestamp")
 
-        jobs = _parse_and_optionally_enrich(
+        jobs = _ingest_page(
             first_page,
             session=session,
             fetch_details=fetch_details,
             app_version=app_version,
             scraped_at=scraped_at,
+            scraped_at_dt=scraped_at_dt,
+            detail_executor=detail_executor,
+            session_pool=session_pool,
+            pending_detail_futures=pending_detail_futures,
         )
 
         total_pages = first_page.get("totalPages") if isinstance(first_page, dict) else None
@@ -120,23 +142,30 @@ def scrape(
                 except requests.HTTPError as exc:
                     status_code = exc.response.status_code if exc.response is not None else None
                     if max_pages is None and status_code == 400:
-                        warnings.warn(
-                            f"Dealls reported more pages than the API allows; page {page} was rejected, so pagination stopped at page {page - 1}.",
-                            RuntimeWarning,
-                        )
+                        if progress is not None:
+                            progress(f"api exhausted at page {page - 1}/{last_page} • {len(jobs)} jobs")
                         break
                     raise
                 jobs.extend(
-                    _parse_and_optionally_enrich(
+                    _ingest_page(
                         page_payload,
                         session=session,
                         fetch_details=fetch_details,
                         app_version=app_version,
                         scraped_at=scraped_at,
+                        scraped_at_dt=scraped_at_dt,
+                        detail_executor=detail_executor,
+                        session_pool=session_pool,
+                        pending_detail_futures=pending_detail_futures,
                     )
                 )
                 if progress is not None:
                     progress(f"page {page}/{last_page} • {len(jobs)} jobs")
+
+                if len(pending_detail_futures) >= DETAIL_DRAIN_THRESHOLD:
+                    _drain_pending_detail_enrichment(pending_detail_futures[:DETAIL_DRAIN_THRESHOLD])
+                    del pending_detail_futures[:DETAIL_DRAIN_THRESHOLD]
+
                 if max_jobs is not None and len(jobs) >= max_jobs:
                     break
 
@@ -146,8 +175,111 @@ def scrape(
             progress(f"done • {len(jobs)} jobs")
         return jobs
     finally:
-        if owns_session:
-            session.close()
+        try:
+            _drain_pending_detail_enrichment(pending_detail_futures)
+        finally:
+            if session_pool is not None:
+                session_pool.close_all()
+            if detail_executor is not None:
+                detail_executor.shutdown(wait=True)
+            if owns_session:
+                session.close()
+
+
+def _ingest_page(
+    payload: dict[str, Any],
+    *,
+    session: requests.Session,
+    fetch_details: bool,
+    app_version: str,
+    scraped_at: str,
+    scraped_at_dt: datetime,
+    detail_executor: ThreadPoolExecutor | None,
+    session_pool: SessionPool | None,
+    pending_detail_futures: list[tuple[Job, Any]],
+) -> list[Job]:
+    if detail_executor is not None and session_pool is not None:
+        jobs_and_raw = _parse_page_jobs_with_docs(
+            payload, scraped_at=scraped_at, scraped_at_dt=scraped_at_dt
+        )
+        pending_detail_futures.extend(
+            _submit_detail_enrichment(
+                detail_executor, session_pool, jobs_and_raw, app_version=app_version
+            )
+        )
+        return [job for job, _ in jobs_and_raw]
+
+    return _parse_and_optionally_enrich(
+        payload,
+        session=session,
+        fetch_details=fetch_details,
+        app_version=app_version,
+        scraped_at=scraped_at,
+    )
+
+
+def _parse_page_jobs_with_docs(
+    payload: dict[str, Any],
+    *,
+    scraped_at: str,
+    scraped_at_dt: datetime,
+) -> list[tuple[Job, dict[str, Any]]]:
+    page_data = _extract_jobs_page(payload)
+    raw_jobs = page_data.get("docs")
+    if not isinstance(raw_jobs, list):
+        raise ValueError("Dealls payload did not include a docs list")
+
+    results: list[tuple[Job, dict[str, Any]]] = []
+    for item in raw_jobs:
+        if not isinstance(item, dict):
+            continue
+        job = _parse_job_doc(item, scraped_at=scraped_at)
+        if job is None or not _is_recent_job_post(job.posted_at, scraped_at_dt):
+            continue
+        results.append((job, item))
+    return results
+
+
+def _submit_detail_enrichment(
+    executor: ThreadPoolExecutor,
+    session_pool: SessionPool,
+    jobs_and_raw: list[tuple[Job, dict[str, Any]]],
+    *,
+    app_version: str,
+) -> list[tuple[Job, Any]]:
+    return [
+        (job, executor.submit(_enrich_via_session_pool, session_pool, job, raw, app_version))
+        for job, raw in jobs_and_raw
+        if _should_fetch_detail(job)
+    ]
+
+
+def _enrich_via_session_pool(
+    session_pool: SessionPool,
+    job: Job,
+    raw_job: dict[str, Any],
+    app_version: str,
+) -> None:
+    session = session_pool.acquire()
+    try:
+        _enrich_job_from_detail(session, job, raw_job, app_version=app_version)
+    finally:
+        session_pool.release(session)
+
+
+def _drain_pending_detail_enrichment(pending: list[tuple[Job, Any]]) -> None:
+    if not pending:
+        return
+    future_to_job = {future: job for job, future in pending}
+    for future in as_completed(future_to_job):
+        job = future_to_job[future]
+        try:
+            future.result()
+        except Exception as exc:
+            warnings.warn(
+                f"Failed to enrich Dealls job {job.job_id} ({job.title}): {exc}",
+                RuntimeWarning,
+            )
 
 
 def _parse_and_optionally_enrich(

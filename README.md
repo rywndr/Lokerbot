@@ -35,8 +35,6 @@ Use `--max-jobs N` to cap each scraper's output at the first `N` jobs after the 
 
 Use `--benchmark` to run the selected source (or every source with `--all-sources`) as a pure performance test. The CLI prints a JSON summary to stdout with elapsed seconds, jobs scraped, and jobs-per-second per source, and writes no snapshot files.
 
-`lokerid` is a browser-driven scraper. It reads the public listings page, prefers the embedded Remix loader payload, falls back to rendered job cards when needed, and opens detail pages only when the listing data is incomplete.
-
 ### Examples
 
 ```bash
